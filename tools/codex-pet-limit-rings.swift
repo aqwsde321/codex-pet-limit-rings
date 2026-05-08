@@ -31,6 +31,40 @@ private let petFrameStateDebounceInterval: TimeInterval = 0.035
 private let dragFollowInterval: TimeInterval = 1.0 / 60.0
 private let dragLiveMismatchTolerance: CGFloat = 96.0
 private let ringsVisibleDefaultsKey = "CodexPetLimitRings.ringsVisible"
+private let barsOffsetXDefaultsKey = "CodexPetLimitRings.barsOffsetX"
+private let barsOffsetYDefaultsKey = "CodexPetLimitRings.barsOffsetY"
+private let barWidthPresetDefaultsKey = "CodexPetLimitRings.barWidthPreset"
+private let usageBarPositionStep: CGFloat = 4.0
+
+private enum UsageBarWidthPreset: String, CaseIterable {
+    case short
+    case normal
+    case wide
+
+    var title: String {
+        switch self {
+        case .short: return "Short"
+        case .normal: return "Normal"
+        case .wide: return "Wide"
+        }
+    }
+
+    var width: CGFloat {
+        switch self {
+        case .short: return 34.0
+        case .normal: return 42.0
+        case .wide: return 54.0
+        }
+    }
+}
+
+private enum UsageBarPositionAction: Int {
+    case left
+    case right
+    case up
+    case down
+    case reset
+}
 
 private struct EventPayload: Decodable {
     var type: String
@@ -289,6 +323,7 @@ final class PetFrameReader {
 
 struct LimitRingRenderer {
     var state: LimitState
+    var barWidth: CGFloat
 
     func draw(in rect: CGRect) {
         guard let context = NSGraphicsContext.current?.cgContext else { return }
@@ -309,7 +344,7 @@ struct LimitRingRenderer {
         let rows = progressRows()
         guard !rows.isEmpty else { return }
 
-        let panelWidth = min(max(112.0, rect.width - 10.0), 128.0)
+        let panelWidth = min(max(barWidth + 72.0, rect.width - 10.0), 136.0)
         let rowHeight: CGFloat = 18.0
         let rowGap: CGFloat = 3.0
         let verticalPadding: CGFloat = 6.0
@@ -345,11 +380,12 @@ struct LimitRingRenderer {
         panelRect: CGRect
     ) {
         let color = color(forRemaining: row.bucket.remainingPercent, role: row.role)
-        let barWidth: CGFloat = 42.0
         let barHeight: CGFloat = 5.0
-        let barX = panelRect.midX - 38.0
+        let textGap: CGFloat = 7.0
+        let textWidth: CGFloat = 34.0
+        let barX = panelRect.midX - (barWidth + textGap + textWidth) / 2.0
         let barY = y + 6.5
-        let textX = barX + barWidth + 7.0
+        let textX = barX + barWidth + textGap
         let fillWidth = max(row.bucket.remainingPercent <= 0 ? 0 : 3.0, barWidth * CGFloat(row.bucket.remainingPercent / 100.0))
 
         context.saveGState()
@@ -449,11 +485,14 @@ final class LimitRingView: NSView {
     var state: LimitState = .empty {
         didSet { needsDisplay = true }
     }
+    var barWidth: CGFloat = UsageBarWidthPreset.normal.width {
+        didSet { needsDisplay = true }
+    }
 
     override var isOpaque: Bool { false }
 
     override func draw(_ dirtyRect: NSRect) {
-        LimitRingRenderer(state: state).draw(in: bounds)
+        LimitRingRenderer(state: state, barWidth: barWidth).draw(in: bounds)
     }
 }
 
@@ -467,6 +506,7 @@ final class LimitRingsApp: NSObject {
     private var statusItem: NSStatusItem?
     private var summaryItem: NSMenuItem?
     private var showRingsItem: NSMenuItem?
+    private var barWidthItems: [NSMenuItem] = []
     private var stateTimer: Timer?
     private var frameTimer: Timer?
     private var dragFollowTimer: Timer?
@@ -484,6 +524,8 @@ final class LimitRingsApp: NSObject {
     private var dragMouseToOverlayOriginOffsetAppKit: CGPoint?
     private var holdDraggedFrameUntil: Date?
     private var ringsVisible: Bool
+    private var usageBarOffset: CGSize
+    private var barWidthPreset: UsageBarWidthPreset
     private var stateReadInFlight = false
 
     init(config: LimitRingsConfig) {
@@ -492,6 +534,11 @@ final class LimitRingsApp: NSObject {
         self.frameReader = PetFrameReader(globalStatePath: config.globalStatePath)
         self.ringView = LimitRingView(frame: CGRect(origin: .zero, size: CGSize(width: config.fallbackSize, height: config.fallbackSize)))
         self.ringsVisible = UserDefaults.standard.object(forKey: ringsVisibleDefaultsKey) as? Bool ?? true
+        self.usageBarOffset = CGSize(
+            width: CGFloat(UserDefaults.standard.double(forKey: barsOffsetXDefaultsKey)),
+            height: CGFloat(UserDefaults.standard.double(forKey: barsOffsetYDefaultsKey))
+        )
+        self.barWidthPreset = UsageBarWidthPreset(rawValue: UserDefaults.standard.string(forKey: barWidthPresetDefaultsKey) ?? "") ?? .normal
         self.panel = NSPanel(
             contentRect: CGRect(origin: .zero, size: CGSize(width: config.fallbackSize, height: config.fallbackSize)),
             styleMask: [.borderless, .nonactivatingPanel],
@@ -508,6 +555,7 @@ final class LimitRingsApp: NSObject {
         panel.level = .statusBar
         panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenAuxiliary]
         super.init()
+        ringView.barWidth = barWidthPreset.width
     }
 
     deinit {
@@ -653,7 +701,10 @@ final class LimitRingsApp: NSObject {
 
     private func setPanelFrame(forPetFrameTopLeft petFrame: CGRect) {
         let size = progressOverlaySize(for: petFrame)
-        let topLeft = CGPoint(x: petFrame.midX - size.width / 2, y: petFrame.minY - 6.0)
+        let topLeft = CGPoint(
+            x: petFrame.midX - size.width / 2 + usageBarOffset.width,
+            y: petFrame.minY - 6.0 + usageBarOffset.height
+        )
         let origin = appKitOriginFromTopLeft(topLeft, size: size)
 
         panel.setFrame(CGRect(origin: origin, size: size), display: true)
@@ -661,13 +712,16 @@ final class LimitRingsApp: NSObject {
 
     private func setPanelFrame(forPetFrameAppKit petFrame: CGRect) {
         let size = progressOverlaySize(for: petFrame)
-        let origin = CGPoint(x: petFrame.midX - size.width / 2, y: petFrame.minY - 56.0)
+        let origin = CGPoint(
+            x: petFrame.midX - size.width / 2 + usageBarOffset.width,
+            y: petFrame.minY - 56.0 - usageBarOffset.height
+        )
         panel.setFrame(CGRect(origin: origin, size: size), display: true)
     }
 
     private func progressOverlaySize(for petFrame: CGRect) -> CGSize {
         CGSize(
-            width: max(132.0, petFrame.width + 18.0),
+            width: max(132.0, petFrame.width + 18.0, barWidthPreset.width + 72.0),
             height: petFrame.height + 62.0
         )
     }
@@ -700,6 +754,9 @@ final class LimitRingsApp: NSObject {
         menu.addItem(refreshItem)
 
         menu.addItem(.separator())
+        menu.addItem(makePositionMenuItem())
+        menu.addItem(makeBarWidthMenuItem())
+        menu.addItem(.separator())
 
         let quitItem = NSMenuItem(title: "Quit Codex Pet Limit Rings", action: #selector(quit(_:)), keyEquivalent: "q")
         quitItem.target = self
@@ -708,6 +765,51 @@ final class LimitRingsApp: NSObject {
         item.menu = menu
         updateSummaryMenuItem()
         updateShowRingsMenuItem()
+        updateBarWidthMenuItems()
+    }
+
+    private func makePositionMenuItem() -> NSMenuItem {
+        let item = NSMenuItem()
+        let view = NSView(frame: NSRect(x: 0, y: 0, width: 236, height: 52))
+
+        let label = NSTextField(labelWithString: "Position")
+        label.frame = NSRect(x: 12, y: 30, width: 212, height: 16)
+        label.font = NSFont.menuFont(ofSize: 12.0)
+        label.textColor = .secondaryLabelColor
+        view.addSubview(label)
+
+        let control = NSSegmentedControl(
+            labels: ["Left", "Right", "Up", "Down", "Reset"],
+            trackingMode: .momentary,
+            target: self,
+            action: #selector(adjustUsageBarsFromSegment(_:))
+        )
+        control.frame = NSRect(x: 10, y: 6, width: 216, height: 24)
+        control.controlSize = .small
+        control.segmentStyle = .rounded
+        control.setWidth(38.0, forSegment: UsageBarPositionAction.left.rawValue)
+        control.setWidth(44.0, forSegment: UsageBarPositionAction.right.rawValue)
+        control.setWidth(30.0, forSegment: UsageBarPositionAction.up.rawValue)
+        control.setWidth(42.0, forSegment: UsageBarPositionAction.down.rawValue)
+        control.setWidth(50.0, forSegment: UsageBarPositionAction.reset.rawValue)
+        view.addSubview(control)
+
+        item.view = view
+        return item
+    }
+
+    private func makeBarWidthMenuItem() -> NSMenuItem {
+        let item = NSMenuItem(title: "Bar Width", action: nil, keyEquivalent: "")
+        let submenu = NSMenu(title: "Bar Width")
+        barWidthItems = UsageBarWidthPreset.allCases.map { preset in
+            let widthItem = NSMenuItem(title: preset.title, action: #selector(setBarWidthPreset(_:)), keyEquivalent: "")
+            widthItem.target = self
+            widthItem.representedObject = preset.rawValue
+            submenu.addItem(widthItem)
+            return widthItem
+        }
+        item.submenu = submenu
+        return item
     }
 
     private func makeStatusBarIcon() -> NSImage {
@@ -741,6 +843,12 @@ final class LimitRingsApp: NSObject {
         showRingsItem?.state = ringsVisible ? .on : .off
     }
 
+    private func updateBarWidthMenuItems() {
+        for item in barWidthItems {
+            item.state = (item.representedObject as? String) == barWidthPreset.rawValue ? .on : .off
+        }
+    }
+
     private func updateRingVisibility() {
         updateShowRingsMenuItem()
         if ringsVisible, currentPetFrameAppKit != nil {
@@ -756,6 +864,24 @@ final class LimitRingsApp: NSObject {
         updateRingVisibility()
     }
 
+    private func saveUsageBarLayout() {
+        UserDefaults.standard.set(Double(usageBarOffset.width), forKey: barsOffsetXDefaultsKey)
+        UserDefaults.standard.set(Double(usageBarOffset.height), forKey: barsOffsetYDefaultsKey)
+        UserDefaults.standard.set(barWidthPreset.rawValue, forKey: barWidthPresetDefaultsKey)
+    }
+
+    private func applyUsageBarLayout() {
+        ringView.barWidth = barWidthPreset.width
+        saveUsageBarLayout()
+        if let currentPetFrameAppKit {
+            setPanelFrame(forPetFrameAppKit: currentPetFrameAppKit)
+            if ringsVisible {
+                panel.orderFrontRegardless()
+            }
+        }
+        updateBarWidthMenuItems()
+    }
+
     @objc private func toggleRings(_ sender: NSMenuItem) {
         setRingsVisible(!ringsVisible)
     }
@@ -764,6 +890,35 @@ final class LimitRingsApp: NSObject {
         updateState()
         updateFrame()
         updateRingVisibility()
+    }
+
+    @objc private func adjustUsageBarsFromSegment(_ sender: NSSegmentedControl) {
+        guard let action = UsageBarPositionAction(rawValue: sender.selectedSegment) else {
+            return
+        }
+
+        switch action {
+        case .left:
+            usageBarOffset.width -= usageBarPositionStep
+        case .right:
+            usageBarOffset.width += usageBarPositionStep
+        case .up:
+            usageBarOffset.height -= usageBarPositionStep
+        case .down:
+            usageBarOffset.height += usageBarPositionStep
+        case .reset:
+            usageBarOffset = .zero
+        }
+        applyUsageBarLayout()
+    }
+
+    @objc private func setBarWidthPreset(_ sender: NSMenuItem) {
+        guard let rawValue = sender.representedObject as? String,
+              let preset = UsageBarWidthPreset(rawValue: rawValue) else {
+            return
+        }
+        barWidthPreset = preset
+        applyUsageBarLayout()
     }
 
     @objc private func quit(_ sender: NSMenuItem) {
@@ -1060,7 +1215,7 @@ func renderPreview(config: LimitRingsConfig) -> Bool {
     image.lockFocus()
     NSColor.clear.setFill()
     NSRect(origin: .zero, size: size).fill()
-    LimitRingRenderer(state: state).draw(in: CGRect(origin: .zero, size: size))
+    LimitRingRenderer(state: state, barWidth: UsageBarWidthPreset.normal.width).draw(in: CGRect(origin: .zero, size: size))
     image.unlockFocus()
 
     guard let previewPath = config.previewPath,

@@ -9,6 +9,8 @@ The usage overlay is pet-agnostic. It works with any pet Codex displays because 
 - A usage-bars icon appears in the macOS menu bar.
 - `Show Usage Bars` toggles the overlay without quitting the app.
 - `Refresh Now` rereads usage and pet-position state.
+- `Position` uses an inline menu control so position buttons can be clicked repeatedly without reopening the menu.
+- `Bar Width` switches between short, normal, and wide bars.
 - The menu summary includes how old the local rate-limit log entry is.
 - Two compact bars below the pet show short-window and weekly remaining capacity.
 - Percentages and reset countdowns are always shown beside the bars.
@@ -37,6 +39,7 @@ Use `--no-mouse-monitor` to disable global mouse event monitoring; this disables
 - Bottom bar: weekly remaining percentage and reset countdown.
 - Bar colors are derived from remaining capacity: green/blue for healthy, amber for low, red for critical.
 - The overlay is drawn under the pet with no panel background, so only the bars and text are visible.
+- Menu-driven position offsets and bar-width presets are saved in `UserDefaults`.
 
 ## Install Contract
 
@@ -59,7 +62,7 @@ The LaunchAgent starts the app at login. The installer also removes the earlier 
 ~/Library/LaunchAgents/com.codex-pet.limit-aura.plist
 ```
 
-`tools/uninstall-limit-rings.sh` unloads the LaunchAgent, removes the app bundle, clears the saved overlay visibility preference, and also cleans up those earlier prototype names.
+`tools/uninstall-limit-rings.sh` unloads the LaunchAgent, removes the app bundle, clears saved overlay visibility and layout preferences, and also cleans up those earlier prototype names.
 
 The build, install, and uninstall scripts refuse destructive app-bundle operations outside the repository `tmp/` app path or the default `~/Applications/CodexPetLimitRings.app` and `~/Applications/CodexLimitAura.app` paths.
 

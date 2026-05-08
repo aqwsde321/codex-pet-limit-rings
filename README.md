@@ -16,7 +16,7 @@ The usage bars are designed to be glanceable:
 - The bottom bar shows the weekly limit remaining.
 - Color moves from calm green/blue to amber and red as capacity gets low.
 - Percentages and reset countdowns are shown beside each bar.
-- A small menu-bar icon lets you hide the overlay, refresh data, or quit.
+- A small menu-bar icon lets you hide the overlay, adjust position and bar width, refresh data, or quit.
 
 When the Codex pet is closed, the overlay disappears. When the pet comes back, it comes back too. On multi-display setups, the overlay stays with the pet instead of jumping to whichever screen is focused.
 
@@ -38,7 +38,7 @@ Install the companion app as a login item:
 tools/install-limit-rings.sh
 ```
 
-You should see a small usage-bars icon in the macOS menu bar. Use that menu to toggle `Show Usage Bars`, refresh the latest usage data, or quit. The usage summary includes how old the local rate-limit log entry is.
+You should see a small usage-bars icon in the macOS menu bar. Use that menu to toggle `Show Usage Bars`, move the bars, choose a bar width, refresh the latest usage data, or quit. The usage summary includes how old the local rate-limit log entry is.
 
 Then use any Codex pet normally. No pet setup step is required.
 

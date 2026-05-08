@@ -6,6 +6,8 @@ Notable changes to `codex-pet-limit-rings` are recorded here.
 
 ### Added
 
+- Menu controls can move the usage bars relative to the pet, reset the position, and choose short, normal, or wide bar widths.
+- Position controls stay open for repeated clicks while nudging the usage bars.
 - Usage bars now show reset countdowns beneath the remaining percentage when reset data is available.
 
 ### Changed
