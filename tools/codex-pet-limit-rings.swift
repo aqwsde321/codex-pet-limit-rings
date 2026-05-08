@@ -1227,15 +1227,11 @@ final class LimitRingsApp: NSObject {
     }
 
     private func isLikelyPetDragStart(at mouse: CGPoint) -> Bool {
-        if let overlay = currentPetOverlayFrameAppKit,
-           overlay.insetBy(dx: -4, dy: -4).contains(mouse) {
-            return true
-        }
         if let petFrame = currentPetFrameAppKit,
-           petFrame.insetBy(dx: -24, dy: -24).contains(mouse) {
+           petFrame.insetBy(dx: -8, dy: -8).contains(mouse) {
             return true
         }
-        return panel.frame.insetBy(dx: -4, dy: -4).contains(mouse)
+        return false
     }
 
     private func updateTooltip(at mouse: CGPoint) {
