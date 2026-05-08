@@ -858,28 +858,28 @@ final class LimitRingsApp: NSObject {
 
     private func makePositionMenuItem() -> NSMenuItem {
         let item = NSMenuItem()
-        let view = NSView(frame: NSRect(x: 0, y: 0, width: 236, height: 52))
+        let view = NSView(frame: NSRect(x: 0, y: 0, width: 166, height: 52))
 
         let label = NSTextField(labelWithString: "Position")
-        label.frame = NSRect(x: 12, y: 30, width: 212, height: 16)
+        label.frame = NSRect(x: 12, y: 30, width: 142, height: 16)
         label.font = NSFont.menuFont(ofSize: 12.0)
         label.textColor = .secondaryLabelColor
         view.addSubview(label)
 
         let control = NSSegmentedControl(
-            labels: ["Left", "Right", "Up", "Down", "Reset"],
+            labels: ["←", "→", "↑", "↓", "↺"],
             trackingMode: .momentary,
             target: self,
             action: #selector(adjustUsageBarsFromSegment(_:))
         )
-        control.frame = NSRect(x: 10, y: 6, width: 216, height: 24)
+        control.frame = NSRect(x: 10, y: 6, width: 146, height: 24)
         control.controlSize = .small
         control.segmentStyle = .rounded
-        control.setWidth(38.0, forSegment: UsageBarPositionAction.left.rawValue)
-        control.setWidth(44.0, forSegment: UsageBarPositionAction.right.rawValue)
-        control.setWidth(30.0, forSegment: UsageBarPositionAction.up.rawValue)
-        control.setWidth(42.0, forSegment: UsageBarPositionAction.down.rawValue)
-        control.setWidth(50.0, forSegment: UsageBarPositionAction.reset.rawValue)
+        control.setWidth(28.0, forSegment: UsageBarPositionAction.left.rawValue)
+        control.setWidth(28.0, forSegment: UsageBarPositionAction.right.rawValue)
+        control.setWidth(28.0, forSegment: UsageBarPositionAction.up.rawValue)
+        control.setWidth(28.0, forSegment: UsageBarPositionAction.down.rawValue)
+        control.setWidth(34.0, forSegment: UsageBarPositionAction.reset.rawValue)
         view.addSubview(control)
 
         item.view = view
