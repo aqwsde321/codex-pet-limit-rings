@@ -695,8 +695,7 @@ struct LimitRingRenderer {
     private func readoutDetailAttributes() -> [NSAttributedString.Key: Any] {
         [
             .font: NSFont.systemFont(ofSize: 9.0, weight: .semibold),
-            .foregroundColor: NSColor(calibratedWhite: 1.0, alpha: 0.64),
-            .kern: -0.35
+            .foregroundColor: NSColor(calibratedWhite: 1.0, alpha: 0.64)
         ]
     }
 }
