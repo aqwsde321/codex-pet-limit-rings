@@ -18,17 +18,15 @@ The rings are pet-agnostic. They work with any pet Codex displays because the ap
 
 ## Data Flow
 
-The app reads live usage first, then local files as support or fallback:
+The app reads local Codex files only:
 
-- `https://chatgpt.com/backend-api/wham/usage`: live usage endpoint, called with the local ChatGPT access token from `~/.codex/auth.json`.
-- `~/.codex/auth.json`: local ChatGPT auth token used for the live usage call.
 - `~/.codex/.codex-global-state.json`: current pet bounds, using `electron-avatar-overlay-bounds.mascot`.
 - `electron-avatar-overlay-open` in the same state file: whether the Codex pet is currently open.
-- `~/.codex/logs_2.sqlite`: fallback source using the newest `codex.rate_limits` event when the live usage call fails.
+- `~/.codex/logs_2.sqlite`: usage source using the newest `codex.rate_limits` event.
 
 The app watches `~/.codex/.codex-global-state.json` with a macOS file event source, so pet open/close and position writes trigger an immediate frame update. A slow frame timer remains as a fallback in case the file is replaced or an event is missed.
 
-No OpenAI API key is required. The menu summary says `Live` when the direct usage read succeeds and `Cached` when it is showing the local event-log fallback.
+No OpenAI API key is required. The app does not read `~/.codex/auth.json` and does not call a remote usage endpoint. The menu summary says `Local` when it is showing the local event-log value.
 
 ## Rendering Model
 

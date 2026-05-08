@@ -31,33 +31,12 @@ private let petFrameStateDebounceInterval: TimeInterval = 0.035
 private let dragFollowInterval: TimeInterval = 1.0 / 60.0
 private let dragLiveMismatchTolerance: CGFloat = 96.0
 private let ringsVisibleDefaultsKey = "CodexPetLimitRings.ringsVisible"
-private let liveUsageURL = URL(string: "https://chatgpt.com/backend-api/wham/usage")!
 
 private struct EventPayload: Decodable {
     var type: String
     var plan_type: String?
     var rate_limits: RatePayload?
     var additional_rate_limits: [String: RatePayload]?
-}
-
-private struct AuthPayload: Decodable {
-    var tokens: AuthTokens?
-}
-
-private struct AuthTokens: Decodable {
-    var access_token: String?
-}
-
-private struct UsagePayload: Decodable {
-    var plan_type: String?
-    var rate_limit: RatePayload?
-    var additional_rate_limits: [AdditionalUsagePayload]?
-}
-
-private struct AdditionalUsagePayload: Decodable {
-    var limit_name: String?
-    var metered_feature: String?
-    var rate_limit: RatePayload?
 }
 
 private struct RatePayload: Decodable {
@@ -84,77 +63,19 @@ struct LimitRingsConfig {
     var codexHome: URL
     var globalStatePath: URL
     var logsPath: URL
-    var authPath: URL
     var previewPath: URL?
     var fallbackSize: CGFloat = 220
 }
 
 final class LimitStateReader {
     private let logsPath: URL
-    private let authPath: URL
 
-    init(logsPath: URL, authPath: URL) {
+    init(logsPath: URL) {
         self.logsPath = logsPath
-        self.authPath = authPath
     }
 
     func readLatest() -> LimitState {
-        if let liveState = readLiveUsage() {
-            return liveState
-        }
         return readLatestLog()
-    }
-
-    private func readLiveUsage() -> LimitState? {
-        guard let token = readAccessToken() else {
-            return nil
-        }
-
-        var request = URLRequest(url: liveUsageURL)
-        request.httpMethod = "GET"
-        request.timeoutInterval = 6.0
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-
-        let semaphore = DispatchSemaphore(value: 0)
-        var resultData: Data?
-        var resultResponse: URLResponse?
-        URLSession.shared.dataTask(with: request) { data, response, _ in
-            resultData = data
-            resultResponse = response
-            semaphore.signal()
-        }.resume()
-
-        guard semaphore.wait(timeout: .now() + 7.0) == .success,
-              let http = resultResponse as? HTTPURLResponse,
-              (200..<300).contains(http.statusCode),
-              let data = resultData,
-              let payload = try? JSONDecoder().decode(UsagePayload.self, from: data) else {
-            return nil
-        }
-
-        let primary = (payload.rate_limit?.primary ?? payload.rate_limit?.primary_window)?.toBucket()
-        let secondary = (payload.rate_limit?.secondary ?? payload.rate_limit?.secondary_window)?.toBucket()
-        let additional = (payload.additional_rate_limits ?? [])
-            .compactMap { item -> (String, LimitBucket)? in
-                guard let bucket = (item.rate_limit?.primary ?? item.rate_limit?.primary_window ?? item.rate_limit?.secondary ?? item.rate_limit?.secondary_window)?.toBucket() else {
-                    return nil
-                }
-                return (item.limit_name ?? item.metered_feature ?? "Additional", bucket)
-            }
-            .sorted { $0.0.localizedCaseInsensitiveCompare($1.0) == .orderedAscending }
-
-        return LimitState(planType: payload.plan_type, primary: primary, secondary: secondary, additional: additional, observedAt: Date(), source: "live")
-    }
-
-    private func readAccessToken() -> String? {
-        guard let data = try? Data(contentsOf: authPath),
-              let payload = try? JSONDecoder().decode(AuthPayload.self, from: data),
-              let token = payload.tokens?.access_token,
-              !token.isEmpty else {
-            return nil
-        }
-        return token
     }
 
     private func readLatestLog() -> LimitState {
@@ -827,7 +748,7 @@ final class LimitRingsApp: NSObject {
 
     init(config: LimitRingsConfig) {
         self.config = config
-        self.stateReader = LimitStateReader(logsPath: config.logsPath, authPath: config.authPath)
+        self.stateReader = LimitStateReader(logsPath: config.logsPath)
         self.frameReader = PetFrameReader(globalStatePath: config.globalStatePath)
         self.ringView = LimitRingView(frame: CGRect(origin: .zero, size: CGSize(width: config.fallbackSize, height: config.fallbackSize)))
         self.ringsVisible = UserDefaults.standard.object(forKey: ringsVisibleDefaultsKey) as? Bool ?? true
@@ -1092,7 +1013,7 @@ final class LimitRingsApp: NSObject {
         if pieces.isEmpty {
             summaryItem.title = "Waiting for Codex limit data"
         } else {
-            let source = ringView.state.source == "live" ? "Live" : "Cached"
+            let source = ringView.state.source == "log" ? "Local" : "Cached"
             summaryItem.title = "\(source) " + pieces.joined(separator: " | ")
         }
     }
@@ -1438,7 +1359,7 @@ final class LimitRingsApp: NSObject {
 }
 
 func renderPreview(config: LimitRingsConfig) -> Bool {
-    let state = LimitStateReader(logsPath: config.logsPath, authPath: config.authPath).readLatest()
+    let state = LimitStateReader(logsPath: config.logsPath).readLatest()
     let size = CGSize(width: config.fallbackSize, height: config.fallbackSize)
     let image = NSImage(size: size)
     image.lockFocus()
@@ -1471,7 +1392,6 @@ func parseConfig() -> LimitRingsConfig? {
         codexHome: codexHome,
         globalStatePath: codexHome.appendingPathComponent(".codex-global-state.json"),
         logsPath: defaultLogsPath(codexHome: codexHome),
-        authPath: codexHome.appendingPathComponent("auth.json"),
         previewPath: nil
     )
 
@@ -1481,9 +1401,9 @@ func parseConfig() -> LimitRingsConfig? {
         switch arg {
         case "--help", "-h":
             print("""
-            Usage: codex-pet-limit-rings [--preview PATH] [--codex-home PATH] [--logs PATH] [--auth PATH] [--state PATH]
+            Usage: codex-pet-limit-rings [--preview PATH] [--codex-home PATH] [--logs PATH] [--state PATH]
 
-            Draws a transparent Codex rate-limit rings around the current pet.
+            Draws transparent Codex rate-limit rings around the current pet using local Codex logs.
             """)
             exit(0)
         case "--preview":
@@ -1497,15 +1417,10 @@ func parseConfig() -> LimitRingsConfig? {
             config.codexHome = url
             config.globalStatePath = url.appendingPathComponent(".codex-global-state.json")
             config.logsPath = defaultLogsPath(codexHome: url)
-            config.authPath = url.appendingPathComponent("auth.json")
         case "--logs":
             guard let value = args.first else { return nil }
             args.removeFirst()
             config.logsPath = URL(fileURLWithPath: value)
-        case "--auth":
-            guard let value = args.first else { return nil }
-            args.removeFirst()
-            config.authPath = URL(fileURLWithPath: value)
         case "--state":
             guard let value = args.first else { return nil }
             args.removeFirst()

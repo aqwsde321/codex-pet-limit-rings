@@ -26,7 +26,7 @@ Because the rings are drawn in a separate transparent overlay, they do not need 
 
 The important design choice is the companion boundary. A menu item inside Codex itself would mean patching Electron app files and redoing that patch after app updates. That is brittle and hard to open source.
 
-`codex-pet-limit-rings` stays outside the Codex app. It reads local Codex state, asks ChatGPT for live usage data using the local Codex/ChatGPT token, and renders its own transparent always-on-top window around the pet. The result is reversible, inspectable, and easy for another Codex agent to install or modify.
+`codex-pet-limit-rings` stays outside the Codex app. It reads local Codex state and the latest local `codex.rate_limits` event, then renders its own transparent always-on-top window around the pet. The result is reversible, inspectable, and easy for another Codex agent to install or modify.
 
 Pet wakeups are handled by a lightweight filesystem watcher on Codex's local global-state file, with a slow fallback timer as a safety net. That lets the rings snap back when the pet is re-enabled without constantly polling for position changes.
 
@@ -78,13 +78,12 @@ tools/install-codex-skill.sh
 
 ## Data And Privacy
 
-The app reads only local Codex files and one ChatGPT usage endpoint:
+The app reads only local Codex files:
 
 - `~/.codex/.codex-global-state.json` tells it whether the pet is open and where it is.
-- `~/.codex/auth.json` provides the local bearer token used to read live usage from ChatGPT.
-- `~/.codex/logs_2.sqlite` is used as a cached fallback if live usage is unavailable.
+- `~/.codex/logs_2.sqlite` provides the latest local `codex.rate_limits` event.
 
-It does not require an OpenAI API key. It does not send pet images, screenshots, prompts, or repo contents anywhere.
+It does not require an OpenAI API key, does not read `~/.codex/auth.json`, and does not call a remote usage endpoint. It does not send pet images, screenshots, prompts, or repo contents anywhere.
 
 ## Project Shape
 

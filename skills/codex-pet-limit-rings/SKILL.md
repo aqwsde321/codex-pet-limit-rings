@@ -60,11 +60,10 @@ launchctl print "gui/$(id -u)/com.codex-pet.limit-rings" >/dev/null
 
 The rings read:
 
-- `~/.codex/auth.json` for a local ChatGPT access token, then `https://chatgpt.com/backend-api/wham/usage` for live usage data.
 - `~/.codex/.codex-global-state.json` for `electron-avatar-overlay-open` and `electron-avatar-overlay-bounds.mascot`.
-- `~/.codex/logs_2.sqlite` for fallback to the newest `codex.rate_limits` event when live usage fails.
+- `~/.codex/logs_2.sqlite` for the newest local `codex.rate_limits` event.
 
-The outer ring is the short-window remaining percentage. The inner ring is the weekly remaining percentage. The menu summary should say `Live` when direct usage succeeds and `Cached` when the local log fallback is active.
+The app should not read `~/.codex/auth.json` or call a remote usage endpoint. The outer ring is the short-window remaining percentage. The inner ring is the weekly remaining percentage. The menu summary should say `Local` when the local log value is active.
 
 Pet wakeups and moves are driven by a filesystem watcher on `~/.codex/.codex-global-state.json`, with a slow fallback timer for missed events. Keep that event-driven path intact when changing frame-following behavior.
 
