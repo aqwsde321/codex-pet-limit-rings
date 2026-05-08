@@ -1,13 +1,27 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-APP="${CODEX_PET_LIMIT_RINGS_APP:-$HOME/Applications/CodexPetLimitRings.app}"
+DEFAULT_APP="$HOME/Applications/CodexPetLimitRings.app"
+DEFAULT_OLD_APP="$HOME/Applications/CodexLimitAura.app"
+APP="${CODEX_PET_LIMIT_RINGS_APP:-$DEFAULT_APP}"
 BIN="$APP/Contents/MacOS/CodexPetLimitRings"
 AGENT="$HOME/Library/LaunchAgents/com.codex-pet.limit-rings.plist"
-OLD_APP="${CODEX_LIMIT_AURA_APP:-$HOME/Applications/CodexLimitAura.app}"
+OLD_APP="${CODEX_LIMIT_AURA_APP:-$DEFAULT_OLD_APP}"
 OLD_BIN="$OLD_APP/Contents/MacOS/CodexLimitAura"
 OLD_AGENT="$HOME/Library/LaunchAgents/com.codex-pet.limit-aura.plist"
 GUI_TARGET="gui/$(id -u)"
+
+if [[ "$APP" != "$DEFAULT_APP" ]]; then
+  echo "Refusing to remove unsafe app path: $APP" >&2
+  echo "Use the default path: $DEFAULT_APP" >&2
+  exit 2
+fi
+
+if [[ "$OLD_APP" != "$DEFAULT_OLD_APP" ]]; then
+  echo "Refusing to remove unsafe old app path: $OLD_APP" >&2
+  echo "Use the default old app path: $DEFAULT_OLD_APP" >&2
+  exit 2
+fi
 
 launchctl bootout "$GUI_TARGET" "$AGENT" >/dev/null 2>&1 || true
 launchctl bootout "$GUI_TARGET" "$OLD_AGENT" >/dev/null 2>&1 || true

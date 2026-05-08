@@ -9,8 +9,9 @@ The rings are pet-agnostic. They work with any pet Codex displays because the ap
 - A rings icon appears in the macOS menu bar.
 - `Show Rings` toggles the overlay without quitting the app.
 - `Refresh Now` rereads usage and pet-position state.
-- Hovering over the ring or pet shows exact remaining percentages at the arc endpoints.
-- Dragging the pet makes the rings follow the gesture immediately while Codex persists the new position.
+- The menu summary includes how old the local rate-limit log entry is.
+- Hovering over the ring or pet shows exact remaining percentages at the arc endpoints when mouse monitoring is enabled.
+- Dragging the pet makes the rings follow the gesture immediately while Codex persists the new position when mouse monitoring is enabled.
 - Closing the Codex pet hides the rings.
 - Multi-display positioning uses the screen containing the pet bounds, not the currently focused screen.
 - macOS desktop/Space switching keeps the rings visible with the pet rather than tying them to one active desktop.
@@ -22,11 +23,12 @@ The app reads local Codex files only:
 
 - `~/.codex/.codex-global-state.json`: current pet bounds, using `electron-avatar-overlay-bounds.mascot`.
 - `electron-avatar-overlay-open` in the same state file: whether the Codex pet is currently open.
-- `~/.codex/logs_2.sqlite`: usage source using the newest `codex.rate_limits` event.
+- `~/.codex/logs_2.sqlite`: usage source using the newest websocket `codex.rate_limits` event from `target = 'codex_api::endpoint::responses_websocket'`.
 
 The app watches `~/.codex/.codex-global-state.json` with a macOS file event source, so pet open/close and position writes trigger an immediate frame update. A slow frame timer remains as a fallback in case the file is replaced or an event is missed.
 
 No OpenAI API key is required. The app does not read `~/.codex/auth.json` and does not call a remote usage endpoint. The menu summary says `Local` when it is showing the local event-log value.
+Use `--no-mouse-monitor` to disable global mouse event monitoring; this also disables drag-follow and hover readouts. The helper scripts apply that mode when `CODEX_PET_LIMIT_RINGS_NO_MOUSE_MONITOR=1` is set.
 
 ## Rendering Model
 
@@ -58,6 +60,8 @@ The LaunchAgent starts the app at login. The installer also removes the earlier 
 ```
 
 `tools/uninstall-limit-rings.sh` unloads the LaunchAgent, removes the app bundle, clears the saved ring visibility preference, and also cleans up those earlier prototype names.
+
+The build, install, and uninstall scripts refuse destructive app-bundle operations outside the repository `tmp/` app path or the default `~/Applications/CodexPetLimitRings.app` and `~/Applications/CodexLimitAura.app` paths.
 
 ## Development
 

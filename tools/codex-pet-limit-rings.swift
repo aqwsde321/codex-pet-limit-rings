@@ -65,6 +65,7 @@ struct LimitRingsConfig {
     var logsPath: URL
     var previewPath: URL?
     var fallbackSize: CGFloat = 220
+    var mouseMonitorEnabled: Bool = true
 }
 
 final class LimitStateReader {
@@ -91,9 +92,10 @@ final class LimitStateReader {
         defer { sqlite3_close(db) }
 
         let sql = """
-        SELECT feedback_log_body
-        FROM logs
-        WHERE feedback_log_body LIKE '%"type":"codex.rate_limits"%'
+        SELECT ts, ts_nanos, feedback_log_body
+        FROM logs INDEXED BY idx_logs_ts
+        WHERE target = 'codex_api::endpoint::responses_websocket'
+          AND feedback_log_body LIKE '%websocket event: {"type":"codex.rate_limits"%'
         ORDER BY ts DESC, ts_nanos DESC, id DESC
         LIMIT 1
         """
@@ -105,10 +107,13 @@ final class LimitStateReader {
         defer { sqlite3_finalize(statement) }
 
         guard sqlite3_step(statement) == SQLITE_ROW,
-              let cText = sqlite3_column_text(statement, 0) else {
+              let cText = sqlite3_column_text(statement, 2) else {
             return .empty
         }
 
+        let ts = sqlite3_column_int64(statement, 0)
+        let tsNanos = sqlite3_column_int64(statement, 1)
+        let observedAt = Date(timeIntervalSince1970: TimeInterval(ts) + TimeInterval(tsNanos) / 1_000_000_000.0)
         let body = String(cString: cText)
         guard let json = extractRateLimitJSON(from: body),
               let data = json.data(using: .utf8),
@@ -127,7 +132,7 @@ final class LimitStateReader {
             }
             .sorted { $0.0.localizedCaseInsensitiveCompare($1.0) == .orderedAscending }
 
-        return LimitState(planType: payload.plan_type, primary: primary, secondary: secondary, additional: additional, observedAt: Date(), source: "log")
+        return LimitState(planType: payload.plan_type, primary: primary, secondary: secondary, additional: additional, observedAt: observedAt, source: "log")
     }
 
     private func extractRateLimitJSON(from body: String) -> String? {
@@ -796,7 +801,9 @@ final class LimitRingsApp: NSObject {
         frameTimer = Timer.scheduledTimer(withTimeInterval: petFrameFallbackPollInterval, repeats: true) { [weak self] _ in
             self?.updateFrame()
         }
-        installDragFollow()
+        if config.mouseMonitorEnabled {
+            installDragFollow()
+        }
         animationTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
             guard let self else { return }
             self.ringView.phase = Date().timeIntervalSince(self.startTime) / 4.6
@@ -1014,7 +1021,7 @@ final class LimitRingsApp: NSObject {
             summaryItem.title = "Waiting for Codex limit data"
         } else {
             let source = ringView.state.source == "log" ? "Local" : "Cached"
-            summaryItem.title = "\(source) " + pieces.joined(separator: " | ")
+            summaryItem.title = "\(source) \(formatAge(since: ringView.state.observedAt)) " + pieces.joined(separator: " | ")
         }
     }
 
@@ -1232,6 +1239,10 @@ final class LimitRingsApp: NSObject {
     }
 
     private func updateTooltip(at mouse: CGPoint) {
+        guard config.mouseMonitorEnabled else {
+            ringView.showsReadout = false
+            return
+        }
         if !ringsVisible || currentPetFrameAppKit == nil || isTrackingMouseDrag {
             ringView.showsReadout = false
             return
@@ -1356,6 +1367,25 @@ final class LimitRingsApp: NSObject {
         }
         return String(format: "%.1f%%", percent)
     }
+
+    private func formatAge(since date: Date) -> String {
+        let seconds = max(0, Date().timeIntervalSince(date))
+        if seconds < 60 {
+            return "<1m ago"
+        }
+
+        let minutes = Int(seconds / 60)
+        if minutes < 60 {
+            return "\(minutes)m ago"
+        }
+
+        let hours = minutes / 60
+        if hours < 24 {
+            return "\(hours)h ago"
+        }
+
+        return "\(hours / 24)d ago"
+    }
 }
 
 func renderPreview(config: LimitRingsConfig) -> Bool {
@@ -1401,7 +1431,7 @@ func parseConfig() -> LimitRingsConfig? {
         switch arg {
         case "--help", "-h":
             print("""
-            Usage: codex-pet-limit-rings [--preview PATH] [--codex-home PATH] [--logs PATH] [--state PATH]
+            Usage: codex-pet-limit-rings [--preview PATH] [--codex-home PATH] [--logs PATH] [--state PATH] [--no-mouse-monitor]
 
             Draws transparent Codex rate-limit rings around the current pet using local Codex logs.
             """)
@@ -1429,6 +1459,8 @@ func parseConfig() -> LimitRingsConfig? {
             guard let value = args.first, let size = Double(value) else { return nil }
             args.removeFirst()
             config.fallbackSize = CGFloat(size)
+        case "--no-mouse-monitor", "--no-drag-follow":
+            config.mouseMonitorEnabled = false
         default:
             fputs("codex-pet-limit-rings: unknown argument \(arg)\n", stderr)
             return nil

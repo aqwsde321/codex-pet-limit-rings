@@ -2,14 +2,33 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-APP="${CODEX_PET_LIMIT_RINGS_APP:-$HOME/Applications/CodexPetLimitRings.app}"
+DEFAULT_APP="$HOME/Applications/CodexPetLimitRings.app"
+DEFAULT_OLD_APP="$HOME/Applications/CodexLimitAura.app"
+APP="${CODEX_PET_LIMIT_RINGS_APP:-$DEFAULT_APP}"
 BIN="$APP/Contents/MacOS/CodexPetLimitRings"
 AGENT_DIR="$HOME/Library/LaunchAgents"
 AGENT="$AGENT_DIR/com.codex-pet.limit-rings.plist"
-OLD_APP="${CODEX_LIMIT_AURA_APP:-$HOME/Applications/CodexLimitAura.app}"
+OLD_APP="${CODEX_LIMIT_AURA_APP:-$DEFAULT_OLD_APP}"
 OLD_BIN="$OLD_APP/Contents/MacOS/CodexLimitAura"
 OLD_AGENT="$AGENT_DIR/com.codex-pet.limit-aura.plist"
 GUI_TARGET="gui/$(id -u)"
+EXTRA_ARG_PLIST=""
+
+if [[ "${CODEX_PET_LIMIT_RINGS_NO_MOUSE_MONITOR:-}" == "1" ]]; then
+  EXTRA_ARG_PLIST="    <string>--no-mouse-monitor</string>"
+fi
+
+if [[ "$APP" != "$DEFAULT_APP" ]]; then
+  echo "Refusing to install into unsafe app path: $APP" >&2
+  echo "Use the default path: $DEFAULT_APP" >&2
+  exit 2
+fi
+
+if [[ "$OLD_APP" != "$DEFAULT_OLD_APP" ]]; then
+  echo "Refusing to remove unsafe old app path: $OLD_APP" >&2
+  echo "Use the default old app path: $DEFAULT_OLD_APP" >&2
+  exit 2
+fi
 
 mkdir -p "$(dirname "$APP")" "$AGENT_DIR" "$HOME/Library/Logs"
 
@@ -35,6 +54,7 @@ cat > "$AGENT" <<PLIST
   <key>ProgramArguments</key>
   <array>
     <string>$BIN</string>
+$EXTRA_ARG_PLIST
   </array>
   <key>RunAtLoad</key>
   <true/>
