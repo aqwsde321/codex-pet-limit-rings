@@ -37,6 +37,7 @@ defaults delete local.codex.pet-limit-rings CodexPetLimitRings.ringsVisible >/de
 defaults delete local.codex.pet-limit-rings CodexPetLimitRings.barsOffsetX >/dev/null 2>&1 || true
 defaults delete local.codex.pet-limit-rings CodexPetLimitRings.barsOffsetY >/dev/null 2>&1 || true
 defaults delete local.codex.pet-limit-rings CodexPetLimitRings.barWidthPreset >/dev/null 2>&1 || true
+defaults delete local.codex.pet-limit-rings CodexPetLimitRings.displayStyle >/dev/null 2>&1 || true
 defaults delete local.codex.limit-aura CodexLimitAura.ringsVisible >/dev/null 2>&1 || true
 
 echo "Codex Pet Limit Rings uninstalled"

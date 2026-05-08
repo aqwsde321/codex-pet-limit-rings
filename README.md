@@ -2,7 +2,7 @@
 
 Codex pets are tiny ambient companions for the work happening in Codex. This project adds one more layer to that idea: your pet can quietly show how much Codex capacity you have left, without turning the app into a dashboard.
 
-The experience is a small macOS companion app. It watches where the Codex pet is, draws compact usage bars under it, and keeps that overlay attached to the pet as it moves. It does not patch Codex, change pet art, or modify the Codex app bundle.
+The experience is a small macOS companion app. It watches where the Codex pet is, draws either compact usage bars under it or the original rings around it, and keeps that overlay attached to the pet as it moves. It does not patch Codex, change pet art, or modify the Codex app bundle.
 
 It works with whatever Codex pet you like. Built-in pet, custom pet, tiny dog, robot, weather daemon, or anything else: the app does not care. It only follows the pet window that Codex is already showing.
 
@@ -17,11 +17,13 @@ The usage bars are designed to be glanceable:
 - Color moves from calm green/blue to amber and red as capacity gets low.
 - Percentages and reset countdowns are shown beside each bar.
 - Bar outlines stay visible, and a short moving gradient sweep appears after each local usage-log check.
-- A small menu-bar icon lets you hide the overlay, adjust position and bar width, refresh data, or quit.
+- A small menu-bar icon lets you hide the overlay, switch between bars and rings, adjust bar position and width, refresh data, or quit.
+
+The menu's `Display Style` item switches between `Bars` and `Rings`. Position and width controls apply to the bar style; the ring style stays centered around the pet.
 
 When the Codex pet is closed, the overlay disappears. When the pet comes back, it comes back too. On multi-display setups, the overlay stays with the pet instead of jumping to whichever screen is focused.
 
-Because the usage bars are drawn in a separate transparent overlay, they do not need pet-specific sprites, masks, metadata, or configuration. Change pets in Codex and the overlay follows the new one automatically.
+Because the usage overlay is drawn in a separate transparent window, it does not need pet-specific sprites, masks, metadata, or configuration. Change pets in Codex and the overlay follows the new one automatically.
 
 ## Why It Works This Way
 
@@ -39,7 +41,7 @@ Install the companion app as a login item:
 tools/install-limit-rings.sh
 ```
 
-You should see a small usage-bars icon in the macOS menu bar. Use that menu to toggle `Show Usage Bars`, move the bars, choose a bar width, refresh the latest usage data, or quit. The usage summary includes how old the local rate-limit log entry is.
+You should see a small usage icon in the macOS menu bar. Use that menu to toggle `Show Usage Overlay`, switch `Display Style`, move the bars, choose a bar width, refresh the latest usage data, or quit. The usage summary includes how old the local rate-limit log entry is.
 
 Then use any Codex pet normally. No pet setup step is required.
 
@@ -62,7 +64,7 @@ This repository is structured so a Codex agent can pick it up from a GitHub link
 Ask the agent:
 
 ```text
-Use the bundled codex-pet-limit-rings skill from this repository. Install the usage-bars companion for my Codex pet, verify the LaunchAgent is running, and confirm the overlay stays anchored to the pet.
+Use the bundled codex-pet-limit-rings skill from this repository. Install the usage-overlay companion for my Codex pet, verify the LaunchAgent is running, and confirm the overlay stays anchored to the pet.
 ```
 
 The agent should read:

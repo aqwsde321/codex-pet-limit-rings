@@ -1,6 +1,6 @@
 ---
 name: codex-pet-limit-rings
-description: Install, run, customize, package, or debug the Codex Pet Limit Rings macOS companion app for Codex pets. Use when the user asks for Codex pet usage-limit bars, a menu-bar toggle, launch-at-login packaging, live/cached Codex limit visualization, or open-source distribution of the pet usage overlay.
+description: Install, run, customize, package, or debug the Codex Pet Limit Rings macOS companion app for Codex pets. Use when the user asks for Codex pet usage-limit bars or rings, a menu-bar toggle, launch-at-login packaging, live/cached Codex limit visualization, or open-source distribution of the pet usage overlay.
 ---
 
 # Codex Pet Limit Rings
@@ -63,10 +63,10 @@ The rings read:
 - `~/.codex/.codex-global-state.json` for `electron-avatar-overlay-open` and `electron-avatar-overlay-bounds.mascot`.
 - `~/.codex/logs_2.sqlite` for the newest local websocket `codex.rate_limits` event from `target = 'codex_api::endpoint::responses_websocket'`.
 
-The app should not read `~/.codex/auth.json` or call a remote usage endpoint. The top usage bar is the short-window remaining percentage. The bottom usage bar is the weekly remaining percentage. The menu summary should say `Local` and include the local log age when the local log value is active. Position offsets and bar-width presets are controlled from the menu and persisted in `UserDefaults`.
+The app should not read `~/.codex/auth.json` or call a remote usage endpoint. The top usage bar or outer ring is the short-window remaining percentage. The bottom usage bar or inner ring is the weekly remaining percentage. The menu summary should say `Local` and include the local log age when the local log value is active. Display style, position offsets, and bar-width presets are controlled from the menu and persisted in `UserDefaults`.
 
 Pet wakeups and moves are driven by a filesystem watcher on `~/.codex/.codex-global-state.json`, with a slow fallback timer for missed events. Keep that event-driven path intact when changing frame-following behavior.
-Use `--no-mouse-monitor` when the user wants no global mouse event monitoring; this disables drag-follow while the usage bars remain visible. Set `CODEX_PET_LIMIT_RINGS_NO_MOUSE_MONITOR=1` for helper-script launches or installs.
+Use `--no-mouse-monitor` when the user wants no global mouse event monitoring; this disables drag-follow while the usage overlay remains visible. Set `CODEX_PET_LIMIT_RINGS_NO_MOUSE_MONITOR=1` for helper-script launches or installs.
 
 ## Editing Workflow
 

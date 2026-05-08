@@ -35,7 +35,20 @@ private let ringsVisibleDefaultsKey = "CodexPetLimitRings.ringsVisible"
 private let barsOffsetXDefaultsKey = "CodexPetLimitRings.barsOffsetX"
 private let barsOffsetYDefaultsKey = "CodexPetLimitRings.barsOffsetY"
 private let barWidthPresetDefaultsKey = "CodexPetLimitRings.barWidthPreset"
+private let displayStyleDefaultsKey = "CodexPetLimitRings.displayStyle"
 private let usageBarPositionStep: CGFloat = 4.0
+
+enum UsageDisplayStyle: String, CaseIterable {
+    case bars
+    case rings
+
+    var title: String {
+        switch self {
+        case .bars: return "Bars"
+        case .rings: return "Rings"
+        }
+    }
+}
 
 private enum UsageBarWidthPreset: String, CaseIterable {
     case short
@@ -324,6 +337,7 @@ final class PetFrameReader {
 
 struct LimitRingRenderer {
     var state: LimitState
+    var displayStyle: UsageDisplayStyle
     var barWidth: CGFloat
     var checkPulse: CGFloat
 
@@ -333,13 +347,156 @@ struct LimitRingRenderer {
         context.setShouldAntialias(true)
         context.clear(rect)
 
-        drawProgressPanel(context, in: rect)
+        switch displayStyle {
+        case .bars:
+            drawProgressPanel(context, in: rect)
+        case .rings:
+            drawRings(context, in: rect)
+        }
         context.restoreGState()
     }
 
     private enum RingRole {
         case primary
         case secondary
+    }
+
+    private func drawRings(_ context: CGContext, in rect: CGRect) {
+        let center = CGPoint(x: rect.midX, y: rect.midY)
+        let minSide = min(rect.width, rect.height)
+        let urgency = max(urgency(for: state.primary), urgency(for: state.secondary))
+        let phase = Double(1.0 - checkPulse)
+        let breathe = max(CGFloat((sin(phase * 2.0 * .pi) + 1.0) * 0.5), checkPulse)
+        let pulse = CGFloat(1.0 + urgency * 0.025 * breathe)
+        let outerRadius = (minSide * 0.5 - 16.0) * pulse
+        let innerRadius = outerRadius - 13.0
+
+        drawHalo(context, center: center, radius: outerRadius, urgency: CGFloat(urgency), breathe: breathe)
+        drawTicks(context, center: center, radius: outerRadius + 5.0)
+
+        if let primary = state.primary {
+            drawRing(
+                context,
+                center: center,
+                radius: outerRadius,
+                lineWidth: 7.0,
+                bucket: primary,
+                color: color(forRemaining: primary.remainingPercent, role: .primary),
+                trackAlpha: 0.20,
+                phase: phase
+            )
+        } else {
+            drawMissingRing(context, center: center, radius: outerRadius, lineWidth: 7.0)
+        }
+
+        if let secondary = state.secondary {
+            drawRing(
+                context,
+                center: center,
+                radius: innerRadius,
+                lineWidth: 4.5,
+                bucket: secondary,
+                color: color(forRemaining: secondary.remainingPercent, role: .secondary),
+                trackAlpha: 0.14,
+                phase: phase + 0.18
+            )
+        }
+
+        drawModelLimitDots(context, center: center, radius: outerRadius + 11.0)
+        drawFixedRingReadouts(context, center: center, outerRadius: outerRadius)
+    }
+
+    private func urgency(for bucket: LimitBucket?) -> Double {
+        guard let bucket else { return 0.0 }
+        return min(max((45.0 - bucket.remainingPercent) / 45.0, 0.0), 1.0)
+    }
+
+    private func drawHalo(_ context: CGContext, center: CGPoint, radius: CGFloat, urgency: CGFloat, breathe: CGFloat) {
+        context.saveGState()
+        let color = NSColor(calibratedRed: 0.23 + urgency * 0.55, green: 0.85 - urgency * 0.30, blue: 0.78 - urgency * 0.48, alpha: 0.22 + urgency * 0.16)
+        context.setLineCap(.round)
+        context.setShadow(offset: .zero, blur: 14.0 + urgency * breathe * 5.0, color: color.withAlphaComponent(0.55).cgColor)
+        context.setStrokeColor(color.withAlphaComponent(0.20).cgColor)
+        context.setLineWidth(8.0)
+        context.addArc(center: center, radius: radius + 3.0, startAngle: 0, endAngle: CGFloat.pi * 2.0, clockwise: false)
+        context.strokePath()
+        context.setShadow(offset: .zero, blur: 0.0, color: nil)
+        context.setStrokeColor(NSColor(calibratedWhite: 1.0, alpha: 0.045).cgColor)
+        context.setLineWidth(1.0)
+        context.addArc(center: center, radius: radius + 13.0, startAngle: 0, endAngle: CGFloat.pi * 2.0, clockwise: false)
+        context.strokePath()
+        context.restoreGState()
+    }
+
+    private func drawTicks(_ context: CGContext, center: CGPoint, radius: CGFloat) {
+        context.saveGState()
+        context.setStrokeColor(NSColor(calibratedWhite: 1.0, alpha: 0.10).cgColor)
+        context.setLineWidth(1.2)
+        context.setLineCap(.round)
+        for i in 0..<24 {
+            guard i % 2 == 0 else { continue }
+            let angle = -CGFloat.pi / 2.0 + CGFloat(i) / 24.0 * CGFloat.pi * 2.0
+            let inner = radius - 1.5
+            let outer = radius + 2.5
+            context.move(to: point(center: center, radius: inner, angle: angle))
+            context.addLine(to: point(center: center, radius: outer, angle: angle))
+            context.strokePath()
+        }
+        context.restoreGState()
+    }
+
+    private func drawRing(
+        _ context: CGContext,
+        center: CGPoint,
+        radius: CGFloat,
+        lineWidth: CGFloat,
+        bucket: LimitBucket,
+        color: NSColor,
+        trackAlpha: CGFloat,
+        phase: Double
+    ) {
+        let start = -CGFloat.pi / 2.0
+        let remaining = CGFloat(bucket.remainingPercent / 100.0)
+        let end = start + max(remaining, 0.018) * CGFloat.pi * 2.0
+
+        context.saveGState()
+        context.setLineCap(.round)
+        context.setLineWidth(lineWidth)
+        context.setStrokeColor(NSColor(calibratedWhite: 0.0, alpha: 0.22).cgColor)
+        context.addArc(center: center, radius: radius + 1.0, startAngle: 0, endAngle: CGFloat.pi * 2.0, clockwise: false)
+        context.strokePath()
+
+        context.setStrokeColor(NSColor(calibratedWhite: 1.0, alpha: trackAlpha).cgColor)
+        context.addArc(center: center, radius: radius, startAngle: 0, endAngle: CGFloat.pi * 2.0, clockwise: false)
+        context.strokePath()
+
+        context.setShadow(offset: .zero, blur: 10.0, color: color.withAlphaComponent(0.42).cgColor)
+        context.setStrokeColor(color.withAlphaComponent(0.30).cgColor)
+        context.setLineWidth(lineWidth + 6.0)
+        context.addArc(center: center, radius: radius, startAngle: start, endAngle: end, clockwise: false)
+        context.strokePath()
+
+        context.setShadow(offset: .zero, blur: 4.0, color: color.withAlphaComponent(0.52).cgColor)
+        context.setStrokeColor(color.cgColor)
+        context.setLineWidth(lineWidth)
+        context.addArc(center: center, radius: radius, startAngle: start, endAngle: end, clockwise: false)
+        context.strokePath()
+
+        let glintAngle = start + CGFloat(phase.truncatingRemainder(dividingBy: 1.0)) * CGFloat.pi * 2.0
+        let glint = point(center: center, radius: radius, angle: glintAngle)
+        context.setFillColor(NSColor(calibratedWhite: 1.0, alpha: 0.38).cgColor)
+        context.fillEllipse(in: CGRect(x: glint.x - 1.8, y: glint.y - 1.8, width: 3.6, height: 3.6))
+        context.restoreGState()
+    }
+
+    private func drawMissingRing(_ context: CGContext, center: CGPoint, radius: CGFloat, lineWidth: CGFloat) {
+        context.saveGState()
+        context.setStrokeColor(NSColor(calibratedWhite: 1.0, alpha: 0.16).cgColor)
+        context.setLineWidth(lineWidth)
+        context.setLineCap(.round)
+        context.addArc(center: center, radius: radius, startAngle: 0, endAngle: CGFloat.pi * 1.74, clockwise: false)
+        context.strokePath()
+        context.restoreGState()
     }
 
     private func drawProgressPanel(_ context: CGContext, in rect: CGRect) {
@@ -453,6 +610,81 @@ struct LimitRingRenderer {
         context.restoreGState()
     }
 
+    private func drawFixedRingReadouts(_ context: CGContext, center: CGPoint, outerRadius: CGFloat) {
+        let columnGap: CGFloat = 5.0
+        var rowItems: [(percent: NSAttributedString, detail: NSAttributedString?, percentSize: CGSize, detailSize: CGSize, color: NSColor, width: CGFloat, height: CGFloat)] = []
+
+        for row in progressRows().prefix(2) {
+            let color = color(forRemaining: row.bucket.remainingPercent, role: row.role)
+            let percent = NSAttributedString(string: formatPercent(row.bucket.remainingPercent), attributes: fixedReadoutPercentAttributes(color: color))
+            let detail = formatResetCountdown(row.bucket.resetAt).map {
+                NSAttributedString(string: $0, attributes: fixedReadoutDetailAttributes())
+            }
+            let percentSize = percent.size()
+            let detailSize = detail?.size() ?? .zero
+            let width = max(44.0, ceil(max(percentSize.width, detailSize.width) + 15.0))
+            let height = max(30.0, ceil(percentSize.height + (detail == nil ? 0.0 : detailSize.height) + 7.0))
+            rowItems.append((percent, detail, percentSize, detailSize, color, width, height))
+        }
+
+        guard !rowItems.isEmpty else { return }
+
+        let totalWidth = rowItems.map(\.width).reduce(0.0, +) + CGFloat(rowItems.count - 1) * columnGap
+        let maxHeight = rowItems.map(\.height).max() ?? 30.0
+        let y = max(6.0, center.y - outerRadius + 4.0)
+        var x = center.x - totalWidth / 2.0
+
+        for item in rowItems {
+            let rect = CGRect(x: x, y: y + (maxHeight - item.height) / 2.0, width: item.width, height: item.height)
+            drawFixedRingReadoutBadge(context, item: item, rect: rect)
+            x += item.width + columnGap
+        }
+    }
+
+    private func drawFixedRingReadoutBadge(
+        _ context: CGContext,
+        item: (percent: NSAttributedString, detail: NSAttributedString?, percentSize: CGSize, detailSize: CGSize, color: NSColor, width: CGFloat, height: CGFloat),
+        rect: CGRect
+    ) {
+        context.saveGState()
+        let path = CGPath(roundedRect: rect, cornerWidth: 8.0, cornerHeight: 8.0, transform: nil)
+        context.setShadow(offset: CGSize(width: 0.0, height: -1.0), blur: 7.0, color: NSColor.black.withAlphaComponent(0.24).cgColor)
+        context.setFillColor(NSColor(calibratedWhite: 0.10, alpha: 0.66).cgColor)
+        context.addPath(path)
+        context.fillPath()
+        context.setShadow(offset: .zero, blur: 0.0, color: nil)
+        context.setStrokeColor(item.color.withAlphaComponent(0.34).cgColor)
+        context.setLineWidth(1.0)
+        context.addPath(path)
+        context.strokePath()
+
+        if let detail = item.detail {
+            let totalHeight = item.percentSize.height + item.detailSize.height - 1.0
+            let detailY = rect.midY - totalHeight / 2.0 - 0.5
+            let percentY = detailY + item.detailSize.height - 1.0
+            item.percent.draw(at: CGPoint(x: rect.midX - item.percentSize.width / 2.0, y: percentY))
+            detail.draw(at: CGPoint(x: rect.midX - item.detailSize.width / 2.0, y: detailY))
+        } else {
+            item.percent.draw(at: CGPoint(x: rect.midX - item.percentSize.width / 2.0, y: rect.midY - item.percentSize.height / 2.0 + 0.5))
+        }
+        context.restoreGState()
+    }
+
+    private func drawModelLimitDots(_ context: CGContext, center: CGPoint, radius: CGFloat) {
+        let dots = Array(state.additional.prefix(8))
+        guard dots.count > 0 else { return }
+        context.saveGState()
+        for (index, item) in dots.enumerated() {
+            let angle = -CGFloat.pi / 2.0 + CGFloat(index) / CGFloat(max(dots.count, 1)) * CGFloat.pi * 2.0
+            let dot = point(center: center, radius: radius, angle: angle)
+            let color = color(forRemaining: item.bucket.remainingPercent, role: .primary)
+            context.setShadow(offset: .zero, blur: 5.0, color: color.withAlphaComponent(0.35).cgColor)
+            context.setFillColor(color.withAlphaComponent(0.82).cgColor)
+            context.fillEllipse(in: CGRect(x: dot.x - 2.4, y: dot.y - 2.4, width: 4.8, height: 4.8))
+        }
+        context.restoreGState()
+    }
+
     private func color(forRemaining remaining: Double, role: RingRole) -> NSColor {
         if remaining <= 12 {
             return NSColor(calibratedRed: 1.00, green: 0.26, blue: 0.22, alpha: 0.96)
@@ -464,6 +696,10 @@ struct LimitRingRenderer {
             return NSColor(calibratedRed: 0.36, green: 0.70, blue: 1.00, alpha: 0.90)
         }
         return NSColor(calibratedRed: 0.24, green: 0.92, blue: 0.74, alpha: 0.96)
+    }
+
+    private func point(center: CGPoint, radius: CGFloat, angle: CGFloat) -> CGPoint {
+        CGPoint(x: center.x + cos(angle) * radius, y: center.y + sin(angle) * radius)
     }
 
     private func formatPercent(_ percent: Double) -> String {
@@ -526,10 +762,27 @@ struct LimitRingRenderer {
         ]
     }
 
+    private func fixedReadoutPercentAttributes(color: NSColor) -> [NSAttributedString.Key: Any] {
+        [
+            .font: NSFont.monospacedSystemFont(ofSize: 10.6, weight: .semibold),
+            .foregroundColor: color.withAlphaComponent(0.96)
+        ]
+    }
+
+    private func fixedReadoutDetailAttributes() -> [NSAttributedString.Key: Any] {
+        [
+            .font: NSFont.systemFont(ofSize: 8.4, weight: .semibold),
+            .foregroundColor: NSColor(calibratedWhite: 1.0, alpha: 0.72)
+        ]
+    }
+
 }
 
 final class LimitRingView: NSView {
     var state: LimitState = .empty {
+        didSet { needsDisplay = true }
+    }
+    var displayStyle: UsageDisplayStyle = .bars {
         didSet { needsDisplay = true }
     }
     var barWidth: CGFloat = UsageBarWidthPreset.normal.width {
@@ -542,7 +795,7 @@ final class LimitRingView: NSView {
     override var isOpaque: Bool { false }
 
     override func draw(_ dirtyRect: NSRect) {
-        LimitRingRenderer(state: state, barWidth: barWidth, checkPulse: checkPulse).draw(in: bounds)
+        LimitRingRenderer(state: state, displayStyle: displayStyle, barWidth: barWidth, checkPulse: checkPulse).draw(in: bounds)
     }
 }
 
@@ -556,6 +809,11 @@ final class LimitRingsApp: NSObject {
     private var statusItem: NSStatusItem?
     private var summaryItem: NSMenuItem?
     private var showRingsItem: NSMenuItem?
+    private var displayStyleItems: [NSMenuItem] = []
+    private var positionMenuItem: NSMenuItem?
+    private var barWidthMenuItem: NSMenuItem?
+    private var positionControl: NSSegmentedControl?
+    private var positionLabel: NSTextField?
     private var barWidthItems: [NSMenuItem] = []
     private var stateTimer: Timer?
     private var frameTimer: Timer?
@@ -576,6 +834,7 @@ final class LimitRingsApp: NSObject {
     private var dragMouseToOverlayOriginOffsetAppKit: CGPoint?
     private var holdDraggedFrameUntil: Date?
     private var ringsVisible: Bool
+    private var displayStyle: UsageDisplayStyle
     private var usageBarOffset: CGSize
     private var barWidthPreset: UsageBarWidthPreset
     private var stateReadInFlight = false
@@ -586,6 +845,7 @@ final class LimitRingsApp: NSObject {
         self.frameReader = PetFrameReader(globalStatePath: config.globalStatePath)
         self.ringView = LimitRingView(frame: CGRect(origin: .zero, size: CGSize(width: config.fallbackSize, height: config.fallbackSize)))
         self.ringsVisible = UserDefaults.standard.object(forKey: ringsVisibleDefaultsKey) as? Bool ?? true
+        self.displayStyle = UsageDisplayStyle(rawValue: UserDefaults.standard.string(forKey: displayStyleDefaultsKey) ?? "") ?? .bars
         self.usageBarOffset = CGSize(
             width: CGFloat(UserDefaults.standard.double(forKey: barsOffsetXDefaultsKey)),
             height: CGFloat(UserDefaults.standard.double(forKey: barsOffsetYDefaultsKey))
@@ -607,6 +867,7 @@ final class LimitRingsApp: NSObject {
         panel.level = .statusBar
         panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenAuxiliary]
         super.init()
+        ringView.displayStyle = displayStyle
         ringView.barWidth = barWidthPreset.width
     }
 
@@ -788,23 +1049,44 @@ final class LimitRingsApp: NSObject {
     }
 
     private func setPanelFrame(forPetFrameTopLeft petFrame: CGRect) {
-        let size = progressOverlaySize(for: petFrame)
-        let topLeft = CGPoint(
-            x: petFrame.midX - size.width / 2 + usageBarOffset.width,
-            y: petFrame.minY - 6.0 + usageBarOffset.height
-        )
+        let size = overlaySize(for: petFrame)
+        let topLeft: CGPoint
+        switch displayStyle {
+        case .bars:
+            topLeft = CGPoint(
+                x: petFrame.midX - size.width / 2 + usageBarOffset.width,
+                y: petFrame.minY - 6.0 + usageBarOffset.height
+            )
+        case .rings:
+            topLeft = CGPoint(x: petFrame.midX - size.width / 2, y: petFrame.midY - size.height / 2)
+        }
         let origin = appKitOriginFromTopLeft(topLeft, size: size)
 
         panel.setFrame(CGRect(origin: origin, size: size), display: true)
     }
 
     private func setPanelFrame(forPetFrameAppKit petFrame: CGRect) {
-        let size = progressOverlaySize(for: petFrame)
-        let origin = CGPoint(
-            x: petFrame.midX - size.width / 2 + usageBarOffset.width,
-            y: petFrame.minY - 56.0 - usageBarOffset.height
-        )
+        let size = overlaySize(for: petFrame)
+        let origin: CGPoint
+        switch displayStyle {
+        case .bars:
+            origin = CGPoint(
+                x: petFrame.midX - size.width / 2 + usageBarOffset.width,
+                y: petFrame.minY - 56.0 - usageBarOffset.height
+            )
+        case .rings:
+            origin = CGPoint(x: petFrame.midX - size.width / 2, y: petFrame.midY - size.height / 2)
+        }
         panel.setFrame(CGRect(origin: origin, size: size), display: true)
+    }
+
+    private func overlaySize(for petFrame: CGRect) -> CGSize {
+        switch displayStyle {
+        case .bars:
+            return progressOverlaySize(for: petFrame)
+        case .rings:
+            return ringOverlaySize(for: petFrame)
+        }
     }
 
     private func progressOverlaySize(for petFrame: CGRect) -> CGSize {
@@ -814,6 +1096,12 @@ final class LimitRingsApp: NSObject {
         )
     }
 
+    private func ringOverlaySize(for petFrame: CGRect) -> CGSize {
+        let padding: CGFloat = 38.0
+        let side = max(petFrame.width, petFrame.height) + padding * 2.0
+        return CGSize(width: side, height: side)
+    }
+
     private func installStatusMenu() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         statusItem = item
@@ -821,7 +1109,7 @@ final class LimitRingsApp: NSObject {
             button.title = ""
             button.image = makeStatusBarIcon()
             button.imagePosition = .imageOnly
-            button.toolTip = "Codex Pet Usage Bars"
+            button.toolTip = "Codex Pet Usage Overlay"
         }
 
         let menu = NSMenu()
@@ -832,7 +1120,7 @@ final class LimitRingsApp: NSObject {
 
         menu.addItem(.separator())
 
-        let showItem = NSMenuItem(title: "Show Usage Bars", action: #selector(toggleRings(_:)), keyEquivalent: "")
+        let showItem = NSMenuItem(title: "Show Usage Overlay", action: #selector(toggleRings(_:)), keyEquivalent: "")
         showItem.target = self
         menu.addItem(showItem)
         showRingsItem = showItem
@@ -842,6 +1130,7 @@ final class LimitRingsApp: NSObject {
         menu.addItem(refreshItem)
 
         menu.addItem(.separator())
+        menu.addItem(makeDisplayStyleMenuItem())
         menu.addItem(makePositionMenuItem())
         menu.addItem(makeBarWidthMenuItem())
         menu.addItem(.separator())
@@ -853,11 +1142,27 @@ final class LimitRingsApp: NSObject {
         item.menu = menu
         updateSummaryMenuItem()
         updateShowRingsMenuItem()
+        updateDisplayStyleMenuItems()
         updateBarWidthMenuItems()
+    }
+
+    private func makeDisplayStyleMenuItem() -> NSMenuItem {
+        let item = NSMenuItem(title: "Display Style", action: nil, keyEquivalent: "")
+        let submenu = NSMenu(title: "Display Style")
+        displayStyleItems = UsageDisplayStyle.allCases.map { style in
+            let styleItem = NSMenuItem(title: style.title, action: #selector(setDisplayStyle(_:)), keyEquivalent: "")
+            styleItem.target = self
+            styleItem.representedObject = style.rawValue
+            submenu.addItem(styleItem)
+            return styleItem
+        }
+        item.submenu = submenu
+        return item
     }
 
     private func makePositionMenuItem() -> NSMenuItem {
         let item = NSMenuItem()
+        positionMenuItem = item
         let view = NSView(frame: NSRect(x: 0, y: 0, width: 166, height: 52))
 
         let label = NSTextField(labelWithString: "Position")
@@ -865,6 +1170,7 @@ final class LimitRingsApp: NSObject {
         label.font = NSFont.menuFont(ofSize: 12.0)
         label.textColor = .secondaryLabelColor
         view.addSubview(label)
+        positionLabel = label
 
         let control = NSSegmentedControl(
             labels: ["←", "→", "↑", "↓", "↺"],
@@ -881,6 +1187,7 @@ final class LimitRingsApp: NSObject {
         control.setWidth(28.0, forSegment: UsageBarPositionAction.down.rawValue)
         control.setWidth(34.0, forSegment: UsageBarPositionAction.reset.rawValue)
         view.addSubview(control)
+        positionControl = control
 
         item.view = view
         return item
@@ -888,6 +1195,7 @@ final class LimitRingsApp: NSObject {
 
     private func makeBarWidthMenuItem() -> NSMenuItem {
         let item = NSMenuItem(title: "Bar Width", action: nil, keyEquivalent: "")
+        barWidthMenuItem = item
         let submenu = NSMenu(title: "Bar Width")
         barWidthItems = UsageBarWidthPreset.allCases.map { preset in
             let widthItem = NSMenuItem(title: preset.title, action: #selector(setBarWidthPreset(_:)), keyEquivalent: "")
@@ -931,10 +1239,25 @@ final class LimitRingsApp: NSObject {
         showRingsItem?.state = ringsVisible ? .on : .off
     }
 
+    private func updateDisplayStyleMenuItems() {
+        for item in displayStyleItems {
+            item.state = (item.representedObject as? String) == displayStyle.rawValue ? .on : .off
+        }
+        updateLayoutControlAvailability()
+    }
+
     private func updateBarWidthMenuItems() {
         for item in barWidthItems {
             item.state = (item.representedObject as? String) == barWidthPreset.rawValue ? .on : .off
         }
+    }
+
+    private func updateLayoutControlAvailability() {
+        let usesBars = displayStyle == .bars
+        positionMenuItem?.isEnabled = usesBars
+        positionControl?.isEnabled = usesBars
+        positionLabel?.textColor = usesBars ? .secondaryLabelColor : .disabledControlTextColor
+        barWidthMenuItem?.isEnabled = usesBars
     }
 
     private func updateRingVisibility() {
@@ -970,6 +1293,18 @@ final class LimitRingsApp: NSObject {
         updateBarWidthMenuItems()
     }
 
+    private func applyDisplayStyle() {
+        ringView.displayStyle = displayStyle
+        UserDefaults.standard.set(displayStyle.rawValue, forKey: displayStyleDefaultsKey)
+        if let currentPetFrameAppKit {
+            setPanelFrame(forPetFrameAppKit: currentPetFrameAppKit)
+            if ringsVisible {
+                panel.orderFrontRegardless()
+            }
+        }
+        updateDisplayStyleMenuItems()
+    }
+
     @objc private func toggleRings(_ sender: NSMenuItem) {
         setRingsVisible(!ringsVisible)
     }
@@ -980,7 +1315,17 @@ final class LimitRingsApp: NSObject {
         updateRingVisibility()
     }
 
+    @objc private func setDisplayStyle(_ sender: NSMenuItem) {
+        guard let rawValue = sender.representedObject as? String,
+              let style = UsageDisplayStyle(rawValue: rawValue) else {
+            return
+        }
+        displayStyle = style
+        applyDisplayStyle()
+    }
+
     @objc private func adjustUsageBarsFromSegment(_ sender: NSSegmentedControl) {
+        guard displayStyle == .bars else { return }
         guard let action = UsageBarPositionAction(rawValue: sender.selectedSegment) else {
             return
         }
@@ -1303,7 +1648,7 @@ func renderPreview(config: LimitRingsConfig) -> Bool {
     image.lockFocus()
     NSColor.clear.setFill()
     NSRect(origin: .zero, size: size).fill()
-    LimitRingRenderer(state: state, barWidth: UsageBarWidthPreset.normal.width, checkPulse: 0.55).draw(in: CGRect(origin: .zero, size: size))
+    LimitRingRenderer(state: state, displayStyle: .bars, barWidth: UsageBarWidthPreset.normal.width, checkPulse: 0.55).draw(in: CGRect(origin: .zero, size: size))
     image.unlockFocus()
 
     guard let previewPath = config.previewPath,
@@ -1341,7 +1686,7 @@ func parseConfig() -> LimitRingsConfig? {
             print("""
             Usage: codex-pet-limit-rings [--preview PATH] [--codex-home PATH] [--logs PATH] [--state PATH] [--no-mouse-monitor]
 
-            Draws transparent Codex rate-limit usage bars under the current pet using local Codex logs.
+            Draws a transparent Codex rate-limit overlay near the current pet using local Codex logs.
             """)
             exit(0)
         case "--preview":

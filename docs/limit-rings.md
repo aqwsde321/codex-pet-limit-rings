@@ -6,14 +6,16 @@ The usage overlay is pet-agnostic. It works with any pet Codex displays because 
 
 ## Experience Contract
 
-- A usage-bars icon appears in the macOS menu bar.
-- `Show Usage Bars` toggles the overlay without quitting the app.
+- A usage-overlay icon appears in the macOS menu bar.
+- `Show Usage Overlay` toggles the overlay without quitting the app.
 - `Refresh Now` rereads usage and pet-position state.
+- `Display Style` switches between compact bars and the original rings.
 - `Position` uses an inline menu control so position buttons can be clicked repeatedly without reopening the menu.
 - `Bar Width` switches between short, normal, and wide bars.
 - The menu summary includes how old the local rate-limit log entry is.
 - Two compact bars below the pet show short-window and weekly remaining capacity.
 - Percentages and reset countdowns are always shown beside the bars.
+- Ring style stays centered around the pet and shows the same short-window and weekly values in two fixed lower translucent readout badges.
 - Dragging the pet makes the overlay follow the gesture immediately while Codex persists the new position when mouse monitoring is enabled.
 - Closing the Codex pet hides the overlay.
 - Multi-display positioning uses the screen containing the pet bounds, not the currently focused screen.
@@ -31,7 +33,7 @@ The app reads local Codex files only:
 The app watches `~/.codex/.codex-global-state.json` with a macOS file event source, so pet open/close and position writes trigger an immediate frame update. A slow frame timer remains as a fallback in case the file is replaced or an event is missed.
 
 No OpenAI API key is required. The app does not read `~/.codex/auth.json` and does not call a remote usage endpoint. The menu summary says `Local` when it is showing the local event-log value.
-Use `--no-mouse-monitor` to disable global mouse event monitoring; this disables drag-follow while the usage bars remain visible. The helper scripts apply that mode when `CODEX_PET_LIMIT_RINGS_NO_MOUSE_MONITOR=1` is set.
+Use `--no-mouse-monitor` to disable global mouse event monitoring; this disables drag-follow while the usage overlay remains visible. The helper scripts apply that mode when `CODEX_PET_LIMIT_RINGS_NO_MOUSE_MONITOR=1` is set.
 
 ## Rendering Model
 
@@ -39,8 +41,9 @@ Use `--no-mouse-monitor` to disable global mouse event monitoring; this disables
 - Bottom bar: weekly remaining percentage and reset countdown.
 - Bar colors are derived from remaining capacity: green/blue for healthy, amber for low, red for critical.
 - Bar outlines stay visible, and a short moving gradient sweep appears on each bar after local usage-log checks, which normally run every 20 seconds.
-- The overlay is drawn under the pet with no panel background, so only the bars and text are visible.
-- Menu-driven position offsets and bar-width presets are saved in `UserDefaults`.
+- Ring style uses the same colors and is drawn around the pet with fixed lower translucent readouts.
+- The overlay is drawn with no panel background, so only the bars/rings and text are visible.
+- Menu-driven display style, bar position offsets, and bar-width presets are saved in `UserDefaults`.
 
 ## Install Contract
 
