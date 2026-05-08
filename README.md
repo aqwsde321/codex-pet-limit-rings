@@ -2,43 +2,43 @@
 
 Codex pets are tiny ambient companions for the work happening in Codex. This project adds one more layer to that idea: your pet can quietly show how much Codex capacity you have left, without turning the app into a dashboard.
 
-The experience is a small macOS companion app. It watches where the Codex pet is, draws two polished rings around it, and keeps those rings attached to the pet as it moves. It does not patch Codex, change pet art, or modify the Codex app bundle.
+The experience is a small macOS companion app. It watches where the Codex pet is, draws compact usage bars under it, and keeps that overlay attached to the pet as it moves. It does not patch Codex, change pet art, or modify the Codex app bundle.
 
 It works with whatever Codex pet you like. Built-in pet, custom pet, tiny dog, robot, weather daemon, or anything else: the app does not care. It only follows the pet window that Codex is already showing.
 
-![Codex Pet Limit Rings around a Codex pet](docs/assets/codex-pet-limit-rings-screenshot.png)
+![Codex pet usage bars near a Codex pet](docs/assets/codex-pet-limit-rings-screenshot.png)
 
 ## What You See
 
-The rings are designed to be glanceable:
+The usage bars are designed to be glanceable:
 
-- The outer ring shows the short-window limit remaining.
-- The inner ring shows the weekly limit remaining.
+- The top bar shows the short-window limit remaining.
+- The bottom bar shows the weekly limit remaining.
 - Color moves from calm green/blue to amber and red as capacity gets low.
-- Hovering over the pet or rings shows the exact percentages at the current ring endpoints when mouse monitoring is enabled.
-- A small menu-bar icon lets you hide the rings, refresh data, or quit.
+- Percentages and reset countdowns are shown beside each bar.
+- A small menu-bar icon lets you hide the overlay, refresh data, or quit.
 
-When the Codex pet is closed, the rings disappear. When the pet comes back, they come back too. On multi-display setups, the rings stay with the pet instead of jumping to whichever screen is focused.
+When the Codex pet is closed, the overlay disappears. When the pet comes back, it comes back too. On multi-display setups, the overlay stays with the pet instead of jumping to whichever screen is focused.
 
-Because the rings are drawn in a separate transparent overlay, they do not need pet-specific sprites, masks, metadata, or configuration. Change pets in Codex and the rings follow the new one automatically.
+Because the usage bars are drawn in a separate transparent overlay, they do not need pet-specific sprites, masks, metadata, or configuration. Change pets in Codex and the overlay follows the new one automatically.
 
 ## Why It Works This Way
 
 The important design choice is the companion boundary. A menu item inside Codex itself would mean patching Electron app files and redoing that patch after app updates. That is brittle and hard to open source.
 
-`codex-pet-limit-rings` stays outside the Codex app. It reads local Codex state and the latest local `codex.rate_limits` event, then renders its own transparent always-on-top window around the pet. The result is reversible, inspectable, and easy for another Codex agent to install or modify.
+`codex-pet-limit-rings` stays outside the Codex app. It reads local Codex state and the latest local `codex.rate_limits` event, then renders its own transparent always-on-top window under the pet. The result is reversible, inspectable, and easy for another Codex agent to install or modify.
 
-Pet wakeups are handled by a lightweight filesystem watcher on Codex's local global-state file, with a slow fallback timer as a safety net. That lets the rings snap back when the pet is re-enabled without constantly polling for position changes.
+Pet wakeups are handled by a lightweight filesystem watcher on Codex's local global-state file, with a slow fallback timer as a safety net. That lets the overlay snap back when the pet is re-enabled without constantly polling for position changes.
 
 ## Quick Start
 
-Install the rings as a login item:
+Install the companion app as a login item:
 
 ```bash
 tools/install-limit-rings.sh
 ```
 
-You should see a small rings icon in the macOS menu bar. Use that menu to toggle `Show Rings`, refresh the latest usage data, or quit. The usage summary includes how old the local rate-limit log entry is.
+You should see a small usage-bars icon in the macOS menu bar. Use that menu to toggle `Show Usage Bars`, refresh the latest usage data, or quit. The usage summary includes how old the local rate-limit log entry is.
 
 Then use any Codex pet normally. No pet setup step is required.
 
@@ -61,7 +61,7 @@ This repository is structured so a Codex agent can pick it up from a GitHub link
 Ask the agent:
 
 ```text
-Use the bundled codex-pet-limit-rings skill from this repository. Install the rings companion for my Codex pet, verify the LaunchAgent is running, and confirm the rings stay anchored to the pet.
+Use the bundled codex-pet-limit-rings skill from this repository. Install the usage-bars companion for my Codex pet, verify the LaunchAgent is running, and confirm the overlay stays anchored to the pet.
 ```
 
 The agent should read:
@@ -85,7 +85,7 @@ The app reads only local Codex files:
 
 It does not require an OpenAI API key, does not read `~/.codex/auth.json`, and does not call a remote usage endpoint. It does not send pet images, screenshots, prompts, or repo contents anywhere.
 
-For stricter local privacy, run the binary with `--no-mouse-monitor` to disable global mouse event monitoring. The rings still follow Codex's persisted pet state and keep readouts visible, but drag-follow is disabled.
+For stricter local privacy, run the binary with `--no-mouse-monitor` to disable global mouse event monitoring. The overlay still follows Codex's persisted pet state and keeps the usage values visible, but drag-follow is disabled.
 Set `CODEX_PET_LIMIT_RINGS_NO_MOUSE_MONITOR=1` when running `tools/run-limit-rings.sh` or `tools/install-limit-rings.sh` to apply the same mode through the helper scripts.
 
 ## Project Shape

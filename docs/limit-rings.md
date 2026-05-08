@@ -2,19 +2,20 @@
 
 Codex Pet Limit Rings is a native macOS companion app for Codex pets. It does not patch Codex, replace pet art, or modify the Codex app bundle. It follows the current pet with a transparent always-on-top window and exposes its own menu-bar icon.
 
-The rings are pet-agnostic. They work with any pet Codex displays because the app tracks the pet window bounds rather than reading, editing, or understanding the pet artwork.
+The usage overlay is pet-agnostic. It works with any pet Codex displays because the app tracks the pet window bounds rather than reading, editing, or understanding the pet artwork.
 
 ## Experience Contract
 
-- A rings icon appears in the macOS menu bar.
-- `Show Rings` toggles the overlay without quitting the app.
+- A usage-bars icon appears in the macOS menu bar.
+- `Show Usage Bars` toggles the overlay without quitting the app.
 - `Refresh Now` rereads usage and pet-position state.
 - The menu summary includes how old the local rate-limit log entry is.
-- Hovering over the ring or pet shows exact remaining percentages at the arc endpoints when mouse monitoring is enabled.
-- Dragging the pet makes the rings follow the gesture immediately while Codex persists the new position when mouse monitoring is enabled.
-- Closing the Codex pet hides the rings.
+- Two compact bars below the pet show short-window and weekly remaining capacity.
+- Percentages and reset countdowns are always shown beside the bars.
+- Dragging the pet makes the overlay follow the gesture immediately while Codex persists the new position when mouse monitoring is enabled.
+- Closing the Codex pet hides the overlay.
 - Multi-display positioning uses the screen containing the pet bounds, not the currently focused screen.
-- macOS desktop/Space switching keeps the rings visible with the pet rather than tying them to one active desktop.
+- macOS desktop/Space switching keeps the overlay visible with the pet rather than tying it to one active desktop.
 - Switching to another Codex pet requires no extra setup; the overlay follows the active pet.
 
 ## Data Flow
@@ -28,15 +29,14 @@ The app reads local Codex files only:
 The app watches `~/.codex/.codex-global-state.json` with a macOS file event source, so pet open/close and position writes trigger an immediate frame update. A slow frame timer remains as a fallback in case the file is replaced or an event is missed.
 
 No OpenAI API key is required. The app does not read `~/.codex/auth.json` and does not call a remote usage endpoint. The menu summary says `Local` when it is showing the local event-log value.
-Use `--no-mouse-monitor` to disable global mouse event monitoring; this disables drag-follow and keeps readouts visible without hover detection. The helper scripts apply that mode when `CODEX_PET_LIMIT_RINGS_NO_MOUSE_MONITOR=1` is set.
+Use `--no-mouse-monitor` to disable global mouse event monitoring; this disables drag-follow while the usage bars remain visible. The helper scripts apply that mode when `CODEX_PET_LIMIT_RINGS_NO_MOUSE_MONITOR=1` is set.
 
 ## Rendering Model
 
-- Outer ring: short-window remaining percentage.
-- Inner ring: weekly remaining percentage.
-- Ring colors are derived from remaining capacity: green/blue for healthy, amber for low, red for critical.
-- Exact percentages are shown only on hover to keep the pet feeling ambient rather than dashboard-like.
-- Additional model-limit buckets may appear as small outer markers when available.
+- Top bar: short-window remaining percentage and reset countdown.
+- Bottom bar: weekly remaining percentage and reset countdown.
+- Bar colors are derived from remaining capacity: green/blue for healthy, amber for low, red for critical.
+- The overlay is drawn under the pet in a small translucent panel.
 
 ## Install Contract
 
@@ -59,7 +59,7 @@ The LaunchAgent starts the app at login. The installer also removes the earlier 
 ~/Library/LaunchAgents/com.codex-pet.limit-aura.plist
 ```
 
-`tools/uninstall-limit-rings.sh` unloads the LaunchAgent, removes the app bundle, clears the saved ring visibility preference, and also cleans up those earlier prototype names.
+`tools/uninstall-limit-rings.sh` unloads the LaunchAgent, removes the app bundle, clears the saved overlay visibility preference, and also cleans up those earlier prototype names.
 
 The build, install, and uninstall scripts refuse destructive app-bundle operations outside the repository `tmp/` app path or the default `~/Applications/CodexPetLimitRings.app` and `~/Applications/CodexLimitAura.app` paths.
 

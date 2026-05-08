@@ -1,13 +1,13 @@
 ---
 name: codex-pet-limit-rings
-description: Install, run, customize, package, or debug the Codex Pet Limit Rings macOS companion app for Codex pets. Use when the user asks for Codex pet usage-limit rings, a menu-bar toggle, launch-at-login packaging, live/cached Codex limit visualization, or open-source distribution of the rings overlay.
+description: Install, run, customize, package, or debug the Codex Pet Limit Rings macOS companion app for Codex pets. Use when the user asks for Codex pet usage-limit bars, a menu-bar toggle, launch-at-login packaging, live/cached Codex limit visualization, or open-source distribution of the pet usage overlay.
 ---
 
 # Codex Pet Limit Rings
 
 ## Core Rule
 
-Keep the Codex desktop app unpatched by default. Ship and modify the rings as a companion macOS app that reads local Codex state and exposes its own menu-bar icon. Only discuss direct Codex app menu patching as a brittle optional route, because it requires `app.asar` patching, Electron integrity updates, and re-signing after Codex updates.
+Keep the Codex desktop app unpatched by default. Ship and modify the usage overlay as a companion macOS app that reads local Codex state and exposes its own menu-bar icon. Only discuss direct Codex app menu patching as a brittle optional route, because it requires `app.asar` patching, Electron integrity updates, and re-signing after Codex updates.
 
 The rings are pet-agnostic. Do not add pet-specific setup unless a user explicitly asks for a custom visual treatment; by default the overlay follows whatever Codex pet is currently active.
 
@@ -25,7 +25,7 @@ Use that checkout as the working directory. Read `AGENTS.md` first if it exists.
 
 ## Common Tasks
 
-Install or enable the rings for a user:
+Install or enable the usage overlay for a user:
 
 ```bash
 tools/install-limit-rings.sh
@@ -63,10 +63,10 @@ The rings read:
 - `~/.codex/.codex-global-state.json` for `electron-avatar-overlay-open` and `electron-avatar-overlay-bounds.mascot`.
 - `~/.codex/logs_2.sqlite` for the newest local websocket `codex.rate_limits` event from `target = 'codex_api::endpoint::responses_websocket'`.
 
-The app should not read `~/.codex/auth.json` or call a remote usage endpoint. The outer ring is the short-window remaining percentage. The inner ring is the weekly remaining percentage. The menu summary should say `Local` and include the local log age when the local log value is active.
+The app should not read `~/.codex/auth.json` or call a remote usage endpoint. The top usage bar is the short-window remaining percentage. The bottom usage bar is the weekly remaining percentage. The menu summary should say `Local` and include the local log age when the local log value is active.
 
 Pet wakeups and moves are driven by a filesystem watcher on `~/.codex/.codex-global-state.json`, with a slow fallback timer for missed events. Keep that event-driven path intact when changing frame-following behavior.
-Use `--no-mouse-monitor` when the user wants no global mouse event monitoring; this disables drag-follow and keeps readouts visible without hover detection. Set `CODEX_PET_LIMIT_RINGS_NO_MOUSE_MONITOR=1` for helper-script launches or installs.
+Use `--no-mouse-monitor` when the user wants no global mouse event monitoring; this disables drag-follow while the usage bars remain visible. Set `CODEX_PET_LIMIT_RINGS_NO_MOUSE_MONITOR=1` for helper-script launches or installs.
 
 ## Editing Workflow
 
