@@ -16,6 +16,7 @@ The usage bars are designed to be glanceable:
 - The bottom bar shows the weekly limit remaining.
 - Color moves from calm green/blue to amber and red as capacity gets low.
 - Percentages and reset countdowns are shown beside each bar.
+- Bar outlines stay visible, and a short moving gradient sweep appears after each local usage-log check.
 - A small menu-bar icon lets you hide the overlay, adjust position and bar width, refresh data, or quit.
 
 When the Codex pet is closed, the overlay disappears. When the pet comes back, it comes back too. On multi-display setups, the overlay stays with the pet instead of jumping to whichever screen is focused.

@@ -30,6 +30,7 @@ private let petFrameFallbackPollInterval: TimeInterval = 2.0
 private let petFrameStateDebounceInterval: TimeInterval = 0.035
 private let dragFollowInterval: TimeInterval = 1.0 / 60.0
 private let dragLiveMismatchTolerance: CGFloat = 96.0
+private let stateCheckPulseDuration: TimeInterval = 0.85
 private let ringsVisibleDefaultsKey = "CodexPetLimitRings.ringsVisible"
 private let barsOffsetXDefaultsKey = "CodexPetLimitRings.barsOffsetX"
 private let barsOffsetYDefaultsKey = "CodexPetLimitRings.barsOffsetY"
@@ -324,6 +325,7 @@ final class PetFrameReader {
 struct LimitRingRenderer {
     var state: LimitState
     var barWidth: CGFloat
+    var checkPulse: CGFloat
 
     func draw(in rect: CGRect) {
         guard let context = NSGraphicsContext.current?.cgContext else { return }
@@ -380,7 +382,7 @@ struct LimitRingRenderer {
         panelRect: CGRect
     ) {
         let color = color(forRemaining: row.bucket.remainingPercent, role: row.role)
-        let barHeight: CGFloat = 5.0
+        let barHeight: CGFloat = 6.0
         let textGap: CGFloat = 7.0
         let textWidth: CGFloat = 34.0
         let barX = panelRect.midX - (barWidth + textGap + textWidth) / 2.0
@@ -389,12 +391,15 @@ struct LimitRingRenderer {
         let fillWidth = max(row.bucket.remainingPercent <= 0 ? 0 : 3.0, barWidth * CGFloat(row.bucket.remainingPercent / 100.0))
 
         context.saveGState()
-        context.setFillColor(NSColor(calibratedWhite: 0.28, alpha: 0.22).cgColor)
-        context.addPath(CGPath(roundedRect: CGRect(x: barX, y: barY, width: barWidth, height: barHeight), cornerWidth: barHeight / 2.0, cornerHeight: barHeight / 2.0, transform: nil))
+        let barRect = CGRect(x: barX, y: barY, width: barWidth, height: barHeight)
+        drawCheckSweep(context, barRect: barRect, color: color)
+        context.setFillColor(NSColor(calibratedWhite: 0.30, alpha: 0.30).cgColor)
+        context.addPath(CGPath(roundedRect: barRect, cornerWidth: barHeight / 2.0, cornerHeight: barHeight / 2.0, transform: nil))
         context.fillPath()
-        context.setFillColor(color.withAlphaComponent(0.88).cgColor)
+        context.setFillColor(color.withAlphaComponent(0.94).cgColor)
         context.addPath(CGPath(roundedRect: CGRect(x: barX, y: barY, width: fillWidth, height: barHeight), cornerWidth: barHeight / 2.0, cornerHeight: barHeight / 2.0, transform: nil))
         context.fillPath()
+        drawBarBorder(context, barRect: barRect, color: color)
         context.restoreGState()
 
         let percent = NSAttributedString(string: formatPercent(row.bucket.remainingPercent), attributes: progressPercentAttributes(color: color))
@@ -404,6 +409,48 @@ struct LimitRingRenderer {
             let detail = NSAttributedString(string: reset, attributes: progressDetailAttributes())
             detail.draw(at: CGPoint(x: textX, y: y - 0.5))
         }
+    }
+
+    private func drawBarBorder(_ context: CGContext, barRect: CGRect, color: NSColor) {
+        let borderRect = barRect.insetBy(dx: -0.8, dy: -0.8)
+        let radius = borderRect.height / 2.0
+        context.setStrokeColor(color.withAlphaComponent(0.24 + 0.22 * checkPulse).cgColor)
+        context.setLineWidth(1.0)
+        context.addPath(CGPath(roundedRect: borderRect, cornerWidth: radius, cornerHeight: radius, transform: nil))
+        context.strokePath()
+    }
+
+    private func drawCheckSweep(_ context: CGContext, barRect: CGRect, color: NSColor) {
+        guard checkPulse > 0.01 else { return }
+        let pulseRect = barRect.insetBy(dx: -1.6, dy: -1.6)
+        let radius = pulseRect.height / 2.0
+        let phase = 1.0 - checkPulse
+        let sweepWidth = max(12.0, barRect.width * 0.46)
+        let sweepStart = pulseRect.minX - sweepWidth + (pulseRect.width + sweepWidth * 2.0) * phase
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        let colors = [
+            NSColor.clear.cgColor,
+            color.withAlphaComponent(0.42 * checkPulse).cgColor,
+            NSColor(calibratedWhite: 1.0, alpha: 0.60 * checkPulse).cgColor,
+            color.withAlphaComponent(0.46 * checkPulse).cgColor,
+            NSColor.clear.cgColor
+        ] as CFArray
+        let locations: [CGFloat] = [0.0, 0.30, 0.50, 0.70, 1.0]
+        guard let gradient = CGGradient(colorsSpace: colorSpace, colors: colors, locations: locations) else {
+            return
+        }
+
+        context.saveGState()
+        context.setShadow(offset: .zero, blur: 5.0, color: color.withAlphaComponent(0.46 * checkPulse).cgColor)
+        context.addPath(CGPath(roundedRect: pulseRect, cornerWidth: radius, cornerHeight: radius, transform: nil))
+        context.clip()
+        context.drawLinearGradient(
+            gradient,
+            start: CGPoint(x: sweepStart, y: pulseRect.midY),
+            end: CGPoint(x: sweepStart + sweepWidth, y: pulseRect.midY),
+            options: []
+        )
+        context.restoreGState()
     }
 
     private func color(forRemaining remaining: Double, role: RingRole) -> NSColor {
@@ -488,11 +535,14 @@ final class LimitRingView: NSView {
     var barWidth: CGFloat = UsageBarWidthPreset.normal.width {
         didSet { needsDisplay = true }
     }
+    var checkPulse: CGFloat = 0.0 {
+        didSet { needsDisplay = true }
+    }
 
     override var isOpaque: Bool { false }
 
     override func draw(_ dirtyRect: NSRect) {
-        LimitRingRenderer(state: state, barWidth: barWidth).draw(in: bounds)
+        LimitRingRenderer(state: state, barWidth: barWidth, checkPulse: checkPulse).draw(in: bounds)
     }
 }
 
@@ -510,6 +560,8 @@ final class LimitRingsApp: NSObject {
     private var stateTimer: Timer?
     private var frameTimer: Timer?
     private var dragFollowTimer: Timer?
+    private var stateCheckPulseTimer: Timer?
+    private var stateCheckPulseStartedAt: Date?
     private var mouseDownMonitor: Any?
     private var mouseDragMonitor: Any?
     private var mouseUpMonitor: Any?
@@ -562,6 +614,7 @@ final class LimitRingsApp: NSObject {
         stateTimer?.invalidate()
         frameTimer?.invalidate()
         dragFollowTimer?.invalidate()
+        stateCheckPulseTimer?.invalidate()
         pendingGlobalStateWatcherRestart?.cancel()
         pendingFrameUpdate?.cancel()
         globalStateSource?.cancel()
@@ -598,8 +651,43 @@ final class LimitRingsApp: NSObject {
                 self.ringView.state = state
                 self.updateSummaryMenuItem()
                 self.stateReadInFlight = false
+                self.triggerStateCheckPulse()
             }
         }
+    }
+
+    private func triggerStateCheckPulse() {
+        stateCheckPulseStartedAt = Date()
+        stateCheckPulseTimer?.invalidate()
+
+        let timer = Timer(timeInterval: 1.0 / 30.0, repeats: true) { [weak self] timer in
+            self?.updateStateCheckPulse(timer)
+        }
+        stateCheckPulseTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
+        updateStateCheckPulse(timer)
+    }
+
+    private func updateStateCheckPulse(_ timer: Timer) {
+        guard let stateCheckPulseStartedAt else {
+            timer.invalidate()
+            stateCheckPulseTimer = nil
+            ringView.checkPulse = 0.0
+            return
+        }
+
+        let elapsed = Date().timeIntervalSince(stateCheckPulseStartedAt)
+        guard elapsed < stateCheckPulseDuration else {
+            timer.invalidate()
+            if stateCheckPulseTimer === timer {
+                stateCheckPulseTimer = nil
+            }
+            self.stateCheckPulseStartedAt = nil
+            ringView.checkPulse = 0.0
+            return
+        }
+
+        ringView.checkPulse = CGFloat(1.0 - elapsed / stateCheckPulseDuration)
     }
 
     private func installGlobalStateWatcher() {
@@ -1215,7 +1303,7 @@ func renderPreview(config: LimitRingsConfig) -> Bool {
     image.lockFocus()
     NSColor.clear.setFill()
     NSRect(origin: .zero, size: size).fill()
-    LimitRingRenderer(state: state, barWidth: UsageBarWidthPreset.normal.width).draw(in: CGRect(origin: .zero, size: size))
+    LimitRingRenderer(state: state, barWidth: UsageBarWidthPreset.normal.width, checkPulse: 0.55).draw(in: CGRect(origin: .zero, size: size))
     image.unlockFocus()
 
     guard let previewPath = config.previewPath,
