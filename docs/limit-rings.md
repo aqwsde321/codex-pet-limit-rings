@@ -36,7 +36,7 @@ Use `--no-mouse-monitor` to disable global mouse event monitoring; this disables
 - Top bar: short-window remaining percentage and reset countdown.
 - Bottom bar: weekly remaining percentage and reset countdown.
 - Bar colors are derived from remaining capacity: green/blue for healthy, amber for low, red for critical.
-- The overlay is drawn under the pet in a small translucent panel.
+- The overlay is drawn under the pet with no panel background, so only the bars and text are visible.
 
 ## Install Contract
 

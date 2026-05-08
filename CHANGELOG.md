@@ -11,6 +11,8 @@ Notable changes to `codex-pet-limit-rings` are recorded here.
 ### Changed
 
 - The overlay now uses compact progress bars under the pet instead of large circular rings.
+- The progress bar background panel is now transparent, leaving only the bars and text visible.
+- Progress bars are shorter and centered closer to the pet so they do not protrude as far left.
 - Reset countdown text uses compact proportional styling so hour/minute labels stay readable without making the panel feel busy.
 - The overlay now follows pet drags from the live Codex overlay window at drag-time, reducing visible lag when moving the pet.
 - Usage data now comes from local `codex.rate_limits` logs only; the app no longer reads `~/.codex/auth.json` or calls the remote usage endpoint.

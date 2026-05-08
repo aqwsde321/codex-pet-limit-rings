@@ -321,22 +321,10 @@ struct LimitRingRenderer {
             height: panelHeight
         )
 
-        context.saveGState()
-        context.setShadow(offset: CGSize(width: 0, height: -1), blur: 8.0, color: NSColor.black.withAlphaComponent(0.26).cgColor)
-        context.setFillColor(NSColor(calibratedWhite: 0.04, alpha: 0.60).cgColor)
-        context.addPath(CGPath(roundedRect: panelRect, cornerWidth: 8.0, cornerHeight: 8.0, transform: nil))
-        context.fillPath()
-        context.setShadow(offset: .zero, blur: 0, color: nil)
-        context.setStrokeColor(NSColor(calibratedWhite: 1.0, alpha: 0.08).cgColor)
-        context.setLineWidth(0.8)
-        context.addPath(CGPath(roundedRect: panelRect.insetBy(dx: 0.4, dy: 0.4), cornerWidth: 7.5, cornerHeight: 7.5, transform: nil))
-        context.strokePath()
-
         for (index, row) in rows.enumerated() {
             let y = panelRect.maxY - verticalPadding - rowHeight - CGFloat(index) * (rowHeight + rowGap)
             drawProgressRow(context, row: row, y: y, panelRect: panelRect)
         }
-        context.restoreGState()
     }
 
     private func progressRows() -> [(bucket: LimitBucket, role: RingRole)] {
@@ -357,15 +345,15 @@ struct LimitRingRenderer {
         panelRect: CGRect
     ) {
         let color = color(forRemaining: row.bucket.remainingPercent, role: row.role)
-        let barWidth: CGFloat = 58.0
+        let barWidth: CGFloat = 42.0
         let barHeight: CGFloat = 5.0
-        let barX = panelRect.minX + 8.0
+        let barX = panelRect.midX - 38.0
         let barY = y + 6.5
-        let textX = barX + barWidth + 8.0
+        let textX = barX + barWidth + 7.0
         let fillWidth = max(row.bucket.remainingPercent <= 0 ? 0 : 3.0, barWidth * CGFloat(row.bucket.remainingPercent / 100.0))
 
         context.saveGState()
-        context.setFillColor(NSColor(calibratedWhite: 1.0, alpha: 0.10).cgColor)
+        context.setFillColor(NSColor(calibratedWhite: 0.28, alpha: 0.22).cgColor)
         context.addPath(CGPath(roundedRect: CGRect(x: barX, y: barY, width: barWidth, height: barHeight), cornerWidth: barHeight / 2.0, cornerHeight: barHeight / 2.0, transform: nil))
         context.fillPath()
         context.setFillColor(color.withAlphaComponent(0.88).cgColor)
@@ -451,7 +439,7 @@ struct LimitRingRenderer {
     private func progressDetailAttributes() -> [NSAttributedString.Key: Any] {
         [
             .font: NSFont.systemFont(ofSize: 8.2, weight: .semibold),
-            .foregroundColor: NSColor(calibratedWhite: 1.0, alpha: 0.62)
+            .foregroundColor: NSColor(calibratedWhite: 0.42, alpha: 0.92)
         ]
     }
 
