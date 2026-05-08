@@ -66,7 +66,7 @@ The rings read:
 The app should not read `~/.codex/auth.json` or call a remote usage endpoint. The outer ring is the short-window remaining percentage. The inner ring is the weekly remaining percentage. The menu summary should say `Local` and include the local log age when the local log value is active.
 
 Pet wakeups and moves are driven by a filesystem watcher on `~/.codex/.codex-global-state.json`, with a slow fallback timer for missed events. Keep that event-driven path intact when changing frame-following behavior.
-Use `--no-mouse-monitor` when the user wants no global mouse event monitoring; this disables drag-follow and hover readouts. Set `CODEX_PET_LIMIT_RINGS_NO_MOUSE_MONITOR=1` for helper-script launches or installs.
+Use `--no-mouse-monitor` when the user wants no global mouse event monitoring; this disables drag-follow and keeps readouts visible without hover detection. Set `CODEX_PET_LIMIT_RINGS_NO_MOUSE_MONITOR=1` for helper-script launches or installs.
 
 ## Editing Workflow
 

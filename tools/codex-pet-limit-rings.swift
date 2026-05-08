@@ -1235,12 +1235,13 @@ final class LimitRingsApp: NSObject {
     }
 
     private func updateTooltip(at mouse: CGPoint) {
-        guard config.mouseMonitorEnabled else {
+        if !ringsVisible || currentPetFrameAppKit == nil || isTrackingMouseDrag {
             ringView.showsReadout = false
             return
         }
-        if !ringsVisible || currentPetFrameAppKit == nil || isTrackingMouseDrag {
-            ringView.showsReadout = false
+
+        guard config.mouseMonitorEnabled else {
+            ringView.showsReadout = true
             return
         }
 

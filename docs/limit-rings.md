@@ -28,7 +28,7 @@ The app reads local Codex files only:
 The app watches `~/.codex/.codex-global-state.json` with a macOS file event source, so pet open/close and position writes trigger an immediate frame update. A slow frame timer remains as a fallback in case the file is replaced or an event is missed.
 
 No OpenAI API key is required. The app does not read `~/.codex/auth.json` and does not call a remote usage endpoint. The menu summary says `Local` when it is showing the local event-log value.
-Use `--no-mouse-monitor` to disable global mouse event monitoring; this also disables drag-follow and hover readouts. The helper scripts apply that mode when `CODEX_PET_LIMIT_RINGS_NO_MOUSE_MONITOR=1` is set.
+Use `--no-mouse-monitor` to disable global mouse event monitoring; this disables drag-follow and keeps readouts visible without hover detection. The helper scripts apply that mode when `CODEX_PET_LIMIT_RINGS_NO_MOUSE_MONITOR=1` is set.
 
 ## Rendering Model
 

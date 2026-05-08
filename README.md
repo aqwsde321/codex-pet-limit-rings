@@ -85,7 +85,7 @@ The app reads only local Codex files:
 
 It does not require an OpenAI API key, does not read `~/.codex/auth.json`, and does not call a remote usage endpoint. It does not send pet images, screenshots, prompts, or repo contents anywhere.
 
-For stricter local privacy, run the binary with `--no-mouse-monitor` to disable global mouse event monitoring. The rings still follow Codex's persisted pet state, but drag-follow and hover readouts are disabled.
+For stricter local privacy, run the binary with `--no-mouse-monitor` to disable global mouse event monitoring. The rings still follow Codex's persisted pet state and keep readouts visible, but drag-follow is disabled.
 Set `CODEX_PET_LIMIT_RINGS_NO_MOUSE_MONITOR=1` when running `tools/run-limit-rings.sh` or `tools/install-limit-rings.sh` to apply the same mode through the helper scripts.
 
 ## Project Shape
