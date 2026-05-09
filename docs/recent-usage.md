@@ -46,15 +46,17 @@ The menu shows up to three recent turn groups:
 
 ```text
 Recent turns
-019e07eb...  Net 2.3k
-  In 12.4k  Cached 10.8k  Out 0.7k
-019e073b...  Net 5.1k
-  In 22.0k  Cached 18.2k  Out 1.3k
+W0/a327  2c  N 8.5k
+  I 192k  Ca 186k  O 1.6k
+W1/8089  1c  N 7.7k
+  I 7.7k  Ca 0  O 41
 
 Limit delta  Short -0.4% | Weekly -0.1%
 ```
 
-Thread IDs are shortened to a prefix because the full IDs are long and not useful in the menu.
+The recent turn rows intentionally match the overlay toast shape so the same information remains available after the toast disappears.
+
+The `Track Turn Usage` menu item controls this whole section and defaults to off on a fresh install. When it is off, the app stops polling and parsing local response-usage rows, hides the recent-turn and limit-delta menu items, and clears any visible turn-usage toast.
 
 ## Overlay Toast
 

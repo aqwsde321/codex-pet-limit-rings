@@ -7,15 +7,16 @@ The usage overlay is pet-agnostic. It works with any pet Codex displays because 
 ## Experience Contract
 
 - A usage-overlay icon appears in the macOS menu bar.
+- `Track Turn Usage` defaults to off and toggles local turn-usage log reads, the recent-turn menu section, and turn-usage toasts.
 - `Show Usage Overlay` toggles the overlay without quitting the app.
 - `Refresh Now` rereads usage and pet-position state.
-- `Display Style` switches between compact bars and the original rings.
-- `Position` uses an inline menu control so position buttons can be clicked repeatedly without reopening the menu.
-- `Bar Width` switches between short, normal, and wide bars.
+- `Display Style` switches between the default rings and compact bars.
+- In bar style, `Position` uses an inline menu control so position buttons can be clicked repeatedly without reopening the menu.
+- In bar style, `Bar Width` switches between short, normal, and wide bars.
 - The menu summary includes how old the local rate-limit log entry is.
-- The menu shows the latest usage-token counts for up to three recent threads.
-- The menu shows the latest short-window and weekly limit delta from consecutive rate-limit events.
-- A short toast appears near the overlay when a new turn usage total is observed.
+- When `Track Turn Usage` is enabled, the menu shows the latest usage-token counts for up to three recent threads.
+- When `Track Turn Usage` is enabled, the menu shows the latest short-window and weekly limit delta from consecutive rate-limit events.
+- When `Track Turn Usage` is enabled, a short toast appears near the overlay when a new turn usage total is observed.
 - Two compact bars below the pet show short-window and weekly remaining capacity.
 - Percentages and reset countdowns are always shown beside the bars.
 - Ring style stays centered around the pet and shows the same short-window and weekly values in two fixed lower translucent readout badges.

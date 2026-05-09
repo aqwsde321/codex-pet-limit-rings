@@ -20,7 +20,7 @@ The usage bars are designed to be glanceable:
 - A small menu-bar icon lets you inspect recent token usage, hide the overlay, switch between bars and rings, adjust bar position and width, refresh data, or quit.
 - A short toast appears near the overlay for a few seconds when a new turn's token usage is observed.
 
-The menu's `Display Style` item switches between `Bars` and `Rings`. Position and width controls apply to the bar style; the ring style stays centered around the pet.
+The menu's `Display Style` item switches between `Rings` and `Bars`; new installs default to `Rings`. `Track Turn Usage` defaults to off and can be enabled from the menu when you want recent turn token toasts and menu rows. Position and width controls apply to the bar style; the ring style stays centered around the pet.
 The same menu also shows recent thread-level token counts from local usage events and the latest short/weekly limit delta.
 
 When the Codex pet is closed, the overlay disappears. When the pet comes back, it comes back too. On multi-display setups, the overlay stays with the pet instead of jumping to whichever screen is focused.
@@ -43,7 +43,7 @@ Install the companion app as a login item:
 tools/install-limit-rings.sh
 ```
 
-You should see a small usage icon in the macOS menu bar. Use that menu to inspect recent token usage, toggle `Show Usage Overlay`, switch `Display Style`, move the bars, choose a bar width, refresh the latest usage data, or quit. The usage summary includes how old the local rate-limit log entry is.
+You should see a small usage icon in the macOS menu bar. Use that menu to toggle `Track Turn Usage`, inspect recent token usage, toggle `Show Usage Overlay`, switch `Display Style`, adjust bar-only layout controls, refresh the latest usage data, or quit. The usage summary includes how old the local rate-limit log entry is.
 
 Then use any Codex pet normally. No pet setup step is required.
 

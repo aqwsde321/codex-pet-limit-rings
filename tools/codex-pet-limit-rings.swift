@@ -82,12 +82,13 @@ private let stateCheckPulseDuration: TimeInterval = 0.85
 private let usageToastPollInterval: TimeInterval = 2.0
 private let usageToastDuration: TimeInterval = 8.0
 private let usageToastMaxAge: TimeInterval = 60.0
-private let usageToastWidth: CGFloat = 224.0
+private let usageToastWidth: CGFloat = 192.0
 private let ringsVisibleDefaultsKey = "CodexPetLimitRings.ringsVisible"
 private let barsOffsetXDefaultsKey = "CodexPetLimitRings.barsOffsetX"
 private let barsOffsetYDefaultsKey = "CodexPetLimitRings.barsOffsetY"
 private let barWidthPresetDefaultsKey = "CodexPetLimitRings.barWidthPreset"
 private let displayStyleDefaultsKey = "CodexPetLimitRings.displayStyle"
+private let turnUsageEnabledDefaultsKey = "CodexPetLimitRings.turnUsageEnabled"
 private let threadWindowSlotsDefaultsKey = "CodexPetLimitRings.threadWindowSlots"
 private let threadWindowSlotCount = 10
 private let usageBarPositionStep: CGFloat = 4.0
@@ -1026,15 +1027,9 @@ struct LimitRingRenderer {
 
         let cardGap: CGFloat = 5.0
         let contentWidth = cards.flatMap(\.sizes).map(\.width).max() ?? 0.0
-        let width = min(max(146.0, ceil(contentWidth + 18.0)), rect.width - 8.0)
+        let width = min(max(126.0, ceil(contentWidth + 14.0)), rect.width - 8.0)
         let stackHeight = cards.map(\.height).reduce(0.0, +) + CGFloat(cards.count - 1) * cardGap
-        let y: CGFloat
-        switch displayStyle {
-        case .bars:
-            y = min(rect.height - stackHeight - 8.0, 58.0)
-        case .rings:
-            y = rect.height - stackHeight - 8.0
-        }
+        let y = rect.height - stackHeight - 8.0
         let stackBottom = max(6.0, y)
 
         context.saveGState()
@@ -1079,7 +1074,7 @@ struct LimitRingRenderer {
         var rowY = rect.maxY - 5.5
         for (row, size) in zip(rows, sizes) {
             rowY -= size.height
-            row.draw(at: CGPoint(x: rect.minX + 9.0, y: rowY))
+            row.draw(at: CGPoint(x: rect.minX + 7.0, y: rowY))
             rowY -= 1.0
         }
     }
@@ -1304,6 +1299,7 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
     private var recentUsageItems: [NSMenuItem] = []
     private var limitDeltaSeparatorItem: NSMenuItem?
     private var limitDeltaItem: NSMenuItem?
+    private var turnUsageItem: NSMenuItem?
     private var showRingsItem: NSMenuItem?
     private var displayStyleItems: [NSMenuItem] = []
     private var positionMenuItem: NSMenuItem?
@@ -1335,6 +1331,7 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
     private var displayStyle: UsageDisplayStyle
     private var usageBarOffset: CGSize
     private var barWidthPreset: UsageBarWidthPreset
+    private var turnUsageEnabled: Bool
     private var usageDetails: UsageDetails = .empty
     private var stateReadInFlight = false
     private var usageReadInFlight = false
@@ -1348,7 +1345,8 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
         self.frameReader = PetFrameReader(globalStatePath: config.globalStatePath)
         self.ringView = LimitRingView(frame: CGRect(origin: .zero, size: CGSize(width: config.fallbackSize, height: config.fallbackSize)))
         self.ringsVisible = UserDefaults.standard.object(forKey: ringsVisibleDefaultsKey) as? Bool ?? true
-        self.displayStyle = UsageDisplayStyle(rawValue: UserDefaults.standard.string(forKey: displayStyleDefaultsKey) ?? "") ?? .bars
+        self.turnUsageEnabled = UserDefaults.standard.object(forKey: turnUsageEnabledDefaultsKey) as? Bool ?? false
+        self.displayStyle = UsageDisplayStyle(rawValue: UserDefaults.standard.string(forKey: displayStyleDefaultsKey) ?? "") ?? .rings
         self.usageBarOffset = CGSize(
             width: CGFloat(UserDefaults.standard.double(forKey: barsOffsetXDefaultsKey)),
             height: CGFloat(UserDefaults.standard.double(forKey: barsOffsetYDefaultsKey))
@@ -1400,9 +1398,7 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
         stateTimer = Timer.scheduledTimer(withTimeInterval: limitStatePollInterval, repeats: true) { [weak self] _ in
             self?.updateState()
         }
-        usageTimer = Timer.scheduledTimer(withTimeInterval: usageToastPollInterval, repeats: true) { [weak self] _ in
-            self?.updateUsageDetails()
-        }
+        updateUsageTimer()
         frameTimer = Timer.scheduledTimer(withTimeInterval: petFrameFallbackPollInterval, repeats: true) { [weak self] _ in
             self?.updateFrame()
         }
@@ -1414,13 +1410,16 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
     private func updateState(showToast: Bool = true) {
         guard !stateReadInFlight else { return }
         stateReadInFlight = true
+        let shouldReadUsage = turnUsageEnabled
         stateQueue.async { [weak self] in
             guard let self else { return }
             let state = self.stateReader.readLatest()
-            let usageDetails = self.stateReader.readUsageDetails()
+            let usageDetails = shouldReadUsage ? self.stateReader.readUsageDetails() : .empty
             DispatchQueue.main.async {
                 self.ringView.state = state
-                self.applyUsageDetails(usageDetails, showToast: showToast)
+                if shouldReadUsage, self.turnUsageEnabled {
+                    self.applyUsageDetails(usageDetails, showToast: showToast)
+                }
                 self.updateSummaryMenuItem()
                 self.stateReadInFlight = false
                 self.triggerStateCheckPulse()
@@ -1429,15 +1428,26 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
     }
 
     private func updateUsageDetails() {
-        guard !usageReadInFlight else { return }
+        guard turnUsageEnabled, !usageReadInFlight else { return }
         usageReadInFlight = true
         stateQueue.async { [weak self] in
             guard let self else { return }
             let usageDetails = self.stateReader.readUsageDetails()
             DispatchQueue.main.async {
-                self.applyUsageDetails(usageDetails, showToast: true)
+                if self.turnUsageEnabled {
+                    self.applyUsageDetails(usageDetails, showToast: true)
+                }
                 self.usageReadInFlight = false
             }
+        }
+    }
+
+    private func updateUsageTimer() {
+        usageTimer?.invalidate()
+        usageTimer = nil
+        guard turnUsageEnabled else { return }
+        usageTimer = Timer.scheduledTimer(withTimeInterval: usageToastPollInterval, repeats: true) { [weak self] _ in
+            self?.updateUsageDetails()
         }
     }
 
@@ -1647,6 +1657,11 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
         installUsageDetailsMenuItems(in: menu)
         menu.addItem(.separator())
 
+        let turnUsageItem = NSMenuItem(title: "Track Turn Usage", action: #selector(toggleTurnUsage(_:)), keyEquivalent: "")
+        turnUsageItem.target = self
+        menu.addItem(turnUsageItem)
+        self.turnUsageItem = turnUsageItem
+
         let showItem = NSMenuItem(title: "Show Usage Overlay", action: #selector(toggleRings(_:)), keyEquivalent: "")
         showItem.target = self
         menu.addItem(showItem)
@@ -1669,6 +1684,7 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
         item.menu = menu
         updateSummaryMenuItem()
         updateUsageDetailsMenuItems()
+        updateTurnUsageMenuItem()
         updateShowRingsMenuItem()
         updateDisplayStyleMenuItems()
         updateBarWidthMenuItems()
@@ -1680,16 +1696,34 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
     }
 
     private func refreshUsageDetailsNow() {
+        guard turnUsageEnabled else {
+            clearUsageDetails()
+            return
+        }
         applyUsageDetails(stateReader.readUsageDetails(), showToast: false)
     }
 
     private func applyUsageDetails(_ usageDetails: UsageDetails, showToast: Bool) {
+        guard turnUsageEnabled else {
+            clearUsageDetails()
+            return
+        }
         let labeledUsageDetails = applyWindowLabels(to: usageDetails)
         self.usageDetails = labeledUsageDetails
         updateUsageDetailsMenuItems()
         if showToast {
             updateUsageToast(from: labeledUsageDetails)
         }
+    }
+
+    private func clearUsageDetails() {
+        usageToastTimer?.invalidate()
+        usageToastTimer = nil
+        usageDetails = .empty
+        ringView.usageToastTurns = []
+        hasPrimedUsageToast = false
+        lastUsageToastSignatures = [:]
+        updateUsageDetailsMenuItems()
     }
 
     private func applyWindowLabels(to usageDetails: UsageDetails) -> UsageDetails {
@@ -1959,6 +1993,19 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
     }
 
     private func updateUsageDetailsMenuItems() {
+        guard turnUsageEnabled else {
+            recentUsageHeaderItem?.isHidden = true
+            recentUsageItems.forEach {
+                $0.title = ""
+                $0.isHidden = true
+            }
+            limitDeltaSeparatorItem?.isHidden = true
+            limitDeltaItem?.title = ""
+            limitDeltaItem?.isHidden = true
+            statusItem?.menu?.update()
+            return
+        }
+
         recentUsageHeaderItem?.isHidden = false
         let turns = Array(usageDetails.recentTurns.prefix(3))
         if turns.isEmpty {
@@ -1978,9 +2025,9 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
 
                 let turn = turns[turnIndex]
                 if index % 2 == 0 {
-                    item.title = "\(windowLabelPrefix(for: turn))  \(turn.callCount)c  N \(formatTokenCount(turn.netTokens))"
+                    item.title = "\(menuUsageID(for: turn))  \(turn.callCount)c  N \(formatTokenCount(turn.netTokens))"
                 } else {
-                    item.title = "  " + formatUsageCallPreview(turn)
+                    item.title = "  " + formatUsageTotalsPreview(turn)
                 }
                 item.isHidden = false
             }
@@ -1995,6 +2042,10 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
             limitDeltaItem?.isHidden = false
         }
         statusItem?.menu?.update()
+    }
+
+    private func updateTurnUsageMenuItem() {
+        turnUsageItem?.state = turnUsageEnabled ? .on : .off
     }
 
     private func updateShowRingsMenuItem() {
@@ -2016,10 +2067,10 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
 
     private func updateLayoutControlAvailability() {
         let usesBars = displayStyle == .bars
-        positionMenuItem?.isEnabled = usesBars
+        positionMenuItem?.isHidden = !usesBars
         positionControl?.isEnabled = usesBars
-        positionLabel?.textColor = usesBars ? .secondaryLabelColor : .disabledControlTextColor
-        barWidthMenuItem?.isEnabled = usesBars
+        positionLabel?.textColor = .secondaryLabelColor
+        barWidthMenuItem?.isHidden = !usesBars
     }
 
     private func updateRingVisibility() {
@@ -2069,6 +2120,18 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
 
     @objc private func toggleRings(_ sender: NSMenuItem) {
         setRingsVisible(!ringsVisible)
+    }
+
+    @objc private func toggleTurnUsage(_ sender: NSMenuItem) {
+        turnUsageEnabled.toggle()
+        UserDefaults.standard.set(turnUsageEnabled, forKey: turnUsageEnabledDefaultsKey)
+        updateTurnUsageMenuItem()
+        updateUsageTimer()
+        if turnUsageEnabled {
+            refreshUsageDetailsNow()
+        } else {
+            clearUsageDetails()
+        }
     }
 
     @objc private func refreshNow(_ sender: NSMenuItem) {
@@ -2408,35 +2471,24 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
         return String(format: "%.1fk", thousands)
     }
 
-    private func threadPrefix(_ threadID: String) -> String {
-        let prefix = threadID.prefix(8)
-        return prefix.count == threadID.count ? String(prefix) : "\(prefix)..."
-    }
-
-    private func windowLabelPrefix(for turn: UsageTurnSummary) -> String {
-        let thread = threadPrefix(turn.threadID)
+    private func menuUsageID(for turn: UsageTurnSummary) -> String {
+        let thread = compactThreadID(turn.threadID)
         guard let windowLabel = turn.windowLabel, !windowLabel.isEmpty else {
             return thread
         }
-        return "\(windowLabel) \(thread)"
+        return "\(windowLabel)/\(thread)"
     }
 
-    private func formatUsageCallPreview(_ turn: UsageTurnSummary) -> String {
-        let calls = Array((turn.calls.isEmpty ? [
-            UsageCallSummary(
-                observedAt: turn.observedAt,
-                inputTokens: turn.inputTokens,
-                cachedTokens: turn.cachedTokens,
-                outputTokens: turn.outputTokens
-            )
-        ] : turn.calls).prefix(3))
-        var parts = calls.enumerated().map { index, call in
-            "#\(index + 1) N\(formatTokenCount(call.netTokens))"
+    private func compactThreadID(_ threadID: String) -> String {
+        let compact = threadID.replacingOccurrences(of: "-", with: "")
+        guard compact.count > 4 else {
+            return compact
         }
-        if turn.callCount > calls.count {
-            parts.append("+\(turn.callCount - calls.count)")
-        }
-        return parts.joined(separator: "  ")
+        return String(compact.suffix(4))
+    }
+
+    private func formatUsageTotalsPreview(_ turn: UsageTurnSummary) -> String {
+        "I \(formatTokenCount(turn.inputTokens))  Ca \(formatTokenCount(turn.cachedTokens))  O \(formatTokenCount(turn.outputTokens))"
     }
 
     private func formatAge(since date: Date) -> String {
