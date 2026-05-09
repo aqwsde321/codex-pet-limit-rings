@@ -11,14 +11,14 @@ The usage overlay is pet-agnostic. It works with any pet Codex displays because 
 - `Show Usage Overlay` toggles the overlay without quitting the app.
 - `Refresh Now` rereads usage and pet-position state.
 - `Display Style` switches between the default rings and compact bars.
-- In bar style, `Position` uses an inline menu control so position buttons can be clicked repeatedly without reopening the menu.
+- In bar style, `Position` uses an inline menu control so position buttons can be clicked repeatedly without reopening the menu. It moves only the bar readouts; turn-usage toasts stay anchored near the pet like ring-style toasts.
 - In bar style, `Bar Width` switches between short, normal, and wide bars.
 - The menu summary includes how old the local rate-limit log entry is.
-- When `Track Turn Usage` is enabled, the menu shows the latest usage-token counts for up to three recent threads.
+- When `Track Turn Usage` is enabled, the menu shows the latest usage-token counts for up to three recent turn groups.
 - When `Track Turn Usage` is enabled, the menu shows the latest short-window and weekly limit delta from consecutive rate-limit events.
 - When `Track Turn Usage` is enabled, a short toast appears near the overlay when a new turn usage total is observed.
-- Two compact bars below the pet show short-window and weekly remaining capacity.
-- Percentages and reset countdowns are always shown beside the bars.
+- In bar style, two compact bars below the pet show short-window and weekly remaining capacity.
+- In bar style, percentages and reset countdowns are shown beside the bars.
 - Ring style stays centered around the pet and shows the same short-window and weekly values in two fixed lower translucent readout badges.
 - Dragging the pet makes the overlay follow the gesture immediately while Codex persists the new position when mouse monitoring is enabled.
 - Closing the Codex pet hides the overlay.
@@ -41,17 +41,18 @@ Use `--no-mouse-monitor` to disable global mouse event monitoring; this disables
 
 ## Rendering Model
 
-- Top bar: short-window remaining percentage and reset countdown.
-- Bottom bar: weekly remaining percentage and reset countdown.
-- Bar colors are derived from remaining capacity: green/blue for healthy, amber for low, red for critical.
+- Ring style is the default and draws short-window and weekly remaining capacity around the pet with fixed lower translucent readouts.
+- Bar style draws the short-window remaining percentage and reset countdown in the top bar.
+- Bar style draws the weekly remaining percentage and reset countdown in the bottom bar.
+- Colors are derived from remaining capacity: green/blue for healthy, amber for low, red for critical.
 - Bar outlines stay visible, and a short moving gradient sweep appears on each bar after local usage-log checks, which normally run every 20 seconds.
-- Ring style uses the same colors and is drawn around the pet with fixed lower translucent readouts.
-- Menu token details are grouped by recent `thread_id`; each row shows net, input, cached, and output tokens from the latest turn found for that thread.
-- The usage toast is polled from local logs and shows the latest net, input, cached, and output token counters for a few seconds.
+- Ring style uses the same color model and is drawn around the pet with fixed lower translucent readouts.
+- When `Track Turn Usage` is enabled, menu token details are grouped by recent `thread_id + turn_id` groups, with reusable `W0` through `W9` labels assigned per `thread_id`.
+- When `Track Turn Usage` is enabled, the usage toast is polled from local logs and shows the latest net, input, cached, and output token counters for a few seconds.
 - The overlay is drawn with no panel background, so only the bars/rings and text are visible.
 - Menu-driven display style, bar position offsets, and bar-width presets are saved in `UserDefaults`.
 
-See `docs/recent-usage.md` for the token-counter menu semantics, including `Net`, `In`, `Cached`, `Out`, thread grouping, and limit-delta caveats.
+See `docs/recent-usage.md` for the token-counter menu semantics, including `Net`, `In`, `Cached`, `Out`, window-slot labels, turn grouping, and limit-delta caveats.
 
 ## Install Contract
 

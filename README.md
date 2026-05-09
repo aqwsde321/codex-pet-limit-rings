@@ -2,26 +2,27 @@
 
 Codex pets are tiny ambient companions for the work happening in Codex. This project adds one more layer to that idea: your pet can quietly show how much Codex capacity you have left, without turning the app into a dashboard.
 
-The experience is a small macOS companion app. It watches where the Codex pet is, draws either compact usage bars under it or the original rings around it, and keeps that overlay attached to the pet as it moves. It does not patch Codex, change pet art, or modify the Codex app bundle.
+The experience is a small macOS companion app. It watches where the Codex pet is, draws either the default usage rings around it or compact usage bars under it, and keeps that overlay attached to the pet as it moves. It does not patch Codex, change pet art, or modify the Codex app bundle.
 
 It works with whatever Codex pet you like. Built-in pet, custom pet, tiny dog, robot, weather daemon, or anything else: the app does not care. It only follows the pet window that Codex is already showing.
 
-![Codex pet usage bars near a Codex pet](docs/assets/codex-pet-limit-rings-screenshot.png)
+![Codex pet usage overlay in optional bar style near a Codex pet](docs/assets/codex-pet-limit-rings-screenshot.png)
 
 ## What You See
 
-The usage bars are designed to be glanceable:
+The default overlay is a pair of rings around the pet:
 
-- The top bar shows the short-window limit remaining.
-- The bottom bar shows the weekly limit remaining.
+- The outer ring shows the short-window limit remaining.
+- The inner ring shows the weekly limit remaining.
+- Percentages and reset countdowns are shown in compact readout badges.
+- The menu's `Display Style` item can switch to compact bars below the pet.
+- In bar style, the top bar shows the short-window limit remaining and the bottom bar shows the weekly limit remaining.
 - Color moves from calm green/blue to amber and red as capacity gets low.
-- Percentages and reset countdowns are shown beside each bar.
-- Bar outlines stay visible, and a short moving gradient sweep appears after each local usage-log check.
 - A small menu-bar icon lets you inspect recent token usage, hide the overlay, switch between bars and rings, adjust bar position and width, refresh data, or quit.
-- A short toast appears near the overlay for a few seconds when a new turn's token usage is observed.
+- `Track Turn Usage` is off by default. When enabled, a short toast appears near the overlay when a new turn's token usage is observed.
 
 The menu's `Display Style` item switches between `Rings` and `Bars`; new installs default to `Rings`. `Track Turn Usage` defaults to off and can be enabled from the menu when you want recent turn token toasts and menu rows. Position and width controls apply to the bar style; the ring style stays centered around the pet.
-The same menu also shows recent thread-level token counts from local usage events and the latest short/weekly limit delta.
+When turn tracking is enabled, the same menu also shows recent window/turn token counts from local usage events and the latest short/weekly limit delta.
 
 When the Codex pet is closed, the overlay disappears. When the pet comes back, it comes back too. On multi-display setups, the overlay stays with the pet instead of jumping to whichever screen is focused.
 

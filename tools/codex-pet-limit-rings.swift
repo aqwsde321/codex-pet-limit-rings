@@ -681,6 +681,7 @@ struct LimitRingRenderer {
     var state: LimitState
     var displayStyle: UsageDisplayStyle
     var barWidth: CGFloat
+    var barOffset: CGSize
     var checkPulse: CGFloat
     var usageToastTurns: [UsageTurnSummary]
 
@@ -855,8 +856,8 @@ struct LimitRingRenderer {
         let verticalPadding: CGFloat = 6.0
         let panelHeight = verticalPadding * 2.0 + CGFloat(rows.count) * rowHeight + CGFloat(max(rows.count - 1, 0)) * rowGap
         let panelRect = CGRect(
-            x: rect.midX - panelWidth / 2.0,
-            y: 4.0,
+            x: rect.midX - panelWidth / 2.0 + barOffset.width,
+            y: 4.0 - barOffset.height,
             width: panelWidth,
             height: panelHeight
         )
@@ -1272,6 +1273,9 @@ final class LimitRingView: NSView {
     var barWidth: CGFloat = UsageBarWidthPreset.normal.width {
         didSet { needsDisplay = true }
     }
+    var barOffset: CGSize = .zero {
+        didSet { needsDisplay = true }
+    }
     var checkPulse: CGFloat = 0.0 {
         didSet { needsDisplay = true }
     }
@@ -1282,7 +1286,7 @@ final class LimitRingView: NSView {
     override var isOpaque: Bool { false }
 
     override func draw(_ dirtyRect: NSRect) {
-        LimitRingRenderer(state: state, displayStyle: displayStyle, barWidth: barWidth, checkPulse: checkPulse, usageToastTurns: usageToastTurns).draw(in: bounds)
+        LimitRingRenderer(state: state, displayStyle: displayStyle, barWidth: barWidth, barOffset: barOffset, checkPulse: checkPulse, usageToastTurns: usageToastTurns).draw(in: bounds)
     }
 }
 
@@ -1371,6 +1375,7 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
         super.init()
         ringView.displayStyle = displayStyle
         ringView.barWidth = barWidthPreset.width
+        ringView.barOffset = usageBarOffset
     }
 
     deinit {
@@ -1588,8 +1593,8 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
         switch displayStyle {
         case .bars:
             topLeft = CGPoint(
-                x: petFrame.midX - size.width / 2 + usageBarOffset.width,
-                y: petFrame.minY - 6.0 + usageBarOffset.height
+                x: petFrame.midX - size.width / 2,
+                y: petFrame.minY - ringOverlayPadding
             )
         case .rings:
             topLeft = CGPoint(x: petFrame.midX - size.width / 2, y: petFrame.midY - size.height / 2)
@@ -1605,8 +1610,8 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
         switch displayStyle {
         case .bars:
             origin = CGPoint(
-                x: petFrame.midX - size.width / 2 + usageBarOffset.width,
-                y: petFrame.minY - 56.0 - usageBarOffset.height
+                x: petFrame.midX - size.width / 2,
+                y: petFrame.maxY + ringOverlayPadding - size.height
             )
         case .rings:
             origin = CGPoint(x: petFrame.midX - size.width / 2, y: petFrame.midY - size.height / 2)
@@ -1625,15 +1630,22 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
 
     private func progressOverlaySize(for petFrame: CGRect) -> CGSize {
         CGSize(
-            width: max(132.0, petFrame.width + 18.0, barWidthPreset.width + 72.0, usageToastWidth + 8.0),
-            height: petFrame.height + 62.0
+            width: max(132.0, ringOverlaySide(for: petFrame), barWidthPreset.width + 72.0, usageToastWidth + 8.0),
+            height: petFrame.height + 56.0 + ringOverlayPadding
         )
     }
 
     private func ringOverlaySize(for petFrame: CGRect) -> CGSize {
-        let padding: CGFloat = 38.0
-        let side = max(petFrame.width, petFrame.height) + padding * 2.0
+        let side = ringOverlaySide(for: petFrame)
         return CGSize(width: max(side, usageToastWidth + 8.0), height: side)
+    }
+
+    private var ringOverlayPadding: CGFloat {
+        38.0
+    }
+
+    private func ringOverlaySide(for petFrame: CGRect) -> CGFloat {
+        max(petFrame.width, petFrame.height) + ringOverlayPadding * 2.0
     }
 
     private func installStatusMenu() {
@@ -2096,6 +2108,7 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
 
     private func applyUsageBarLayout() {
         ringView.barWidth = barWidthPreset.width
+        ringView.barOffset = usageBarOffset
         saveUsageBarLayout()
         if let currentPetFrameAppKit {
             setPanelFrame(forPetFrameAppKit: currentPetFrameAppKit)
@@ -2518,7 +2531,7 @@ func renderPreview(config: LimitRingsConfig) -> Bool {
     image.lockFocus()
     NSColor.clear.setFill()
     NSRect(origin: .zero, size: size).fill()
-    LimitRingRenderer(state: state, displayStyle: .bars, barWidth: UsageBarWidthPreset.normal.width, checkPulse: 0.55, usageToastTurns: []).draw(in: CGRect(origin: .zero, size: size))
+    LimitRingRenderer(state: state, displayStyle: .rings, barWidth: UsageBarWidthPreset.normal.width, barOffset: .zero, checkPulse: 0.55, usageToastTurns: []).draw(in: CGRect(origin: .zero, size: size))
     image.unlockFocus()
 
     guard let previewPath = config.previewPath,
