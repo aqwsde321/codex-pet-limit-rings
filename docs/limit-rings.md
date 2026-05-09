@@ -13,6 +13,9 @@ The usage overlay is pet-agnostic. It works with any pet Codex displays because 
 - `Position` uses an inline menu control so position buttons can be clicked repeatedly without reopening the menu.
 - `Bar Width` switches between short, normal, and wide bars.
 - The menu summary includes how old the local rate-limit log entry is.
+- The menu shows the latest usage-token counts for up to three recent threads.
+- The menu shows the latest short-window and weekly limit delta from consecutive rate-limit events.
+- A short toast appears near the overlay when a new turn usage total is observed.
 - Two compact bars below the pet show short-window and weekly remaining capacity.
 - Percentages and reset countdowns are always shown beside the bars.
 - Ring style stays centered around the pet and shows the same short-window and weekly values in two fixed lower translucent readout badges.
@@ -28,7 +31,7 @@ The app reads local Codex files only:
 
 - `~/.codex/.codex-global-state.json`: current pet bounds, using `electron-avatar-overlay-bounds.mascot`.
 - `electron-avatar-overlay-open` in the same state file: whether the Codex pet is currently open.
-- `~/.codex/logs_2.sqlite`: usage source using the newest websocket `codex.rate_limits` event from `target = 'codex_api::endpoint::responses_websocket'`.
+- `~/.codex/logs_2.sqlite`: usage source using the newest websocket `codex.rate_limits` event and recent response `usage` token counters from `target = 'codex_api::endpoint::responses_websocket'`.
 
 The app watches `~/.codex/.codex-global-state.json` with a macOS file event source, so pet open/close and position writes trigger an immediate frame update. A slow frame timer remains as a fallback in case the file is replaced or an event is missed.
 
@@ -42,8 +45,12 @@ Use `--no-mouse-monitor` to disable global mouse event monitoring; this disables
 - Bar colors are derived from remaining capacity: green/blue for healthy, amber for low, red for critical.
 - Bar outlines stay visible, and a short moving gradient sweep appears on each bar after local usage-log checks, which normally run every 20 seconds.
 - Ring style uses the same colors and is drawn around the pet with fixed lower translucent readouts.
+- Menu token details are grouped by recent `thread_id`; each row shows net, input, cached, and output tokens from the latest turn found for that thread.
+- The usage toast is polled from local logs and shows the latest net, input, cached, and output token counters for a few seconds.
 - The overlay is drawn with no panel background, so only the bars/rings and text are visible.
 - Menu-driven display style, bar position offsets, and bar-width presets are saved in `UserDefaults`.
+
+See `docs/recent-usage.md` for the token-counter menu semantics, including `Net`, `In`, `Cached`, `Out`, thread grouping, and limit-delta caveats.
 
 ## Install Contract
 

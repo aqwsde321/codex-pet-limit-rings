@@ -17,9 +17,11 @@ The usage bars are designed to be glanceable:
 - Color moves from calm green/blue to amber and red as capacity gets low.
 - Percentages and reset countdowns are shown beside each bar.
 - Bar outlines stay visible, and a short moving gradient sweep appears after each local usage-log check.
-- A small menu-bar icon lets you hide the overlay, switch between bars and rings, adjust bar position and width, refresh data, or quit.
+- A small menu-bar icon lets you inspect recent token usage, hide the overlay, switch between bars and rings, adjust bar position and width, refresh data, or quit.
+- A short toast appears near the overlay for a few seconds when a new turn's token usage is observed.
 
 The menu's `Display Style` item switches between `Bars` and `Rings`. Position and width controls apply to the bar style; the ring style stays centered around the pet.
+The same menu also shows recent thread-level token counts from local usage events and the latest short/weekly limit delta.
 
 When the Codex pet is closed, the overlay disappears. When the pet comes back, it comes back too. On multi-display setups, the overlay stays with the pet instead of jumping to whichever screen is focused.
 
@@ -41,7 +43,7 @@ Install the companion app as a login item:
 tools/install-limit-rings.sh
 ```
 
-You should see a small usage icon in the macOS menu bar. Use that menu to toggle `Show Usage Overlay`, switch `Display Style`, move the bars, choose a bar width, refresh the latest usage data, or quit. The usage summary includes how old the local rate-limit log entry is.
+You should see a small usage icon in the macOS menu bar. Use that menu to inspect recent token usage, toggle `Show Usage Overlay`, switch `Display Style`, move the bars, choose a bar width, refresh the latest usage data, or quit. The usage summary includes how old the local rate-limit log entry is.
 
 Then use any Codex pet normally. No pet setup step is required.
 
@@ -72,6 +74,7 @@ The agent should read:
 - `AGENTS.md` for the project contract.
 - `skills/codex-pet-limit-rings/SKILL.md` for the install, debug, and validation workflow.
 - `docs/limit-rings.md` for the data and rendering model.
+- `docs/recent-usage.md` for the menu token-counter semantics.
 
 To install the bundled skill into local Codex:
 
@@ -84,7 +87,7 @@ tools/install-codex-skill.sh
 The app reads only local Codex files:
 
 - `~/.codex/.codex-global-state.json` tells it whether the pet is open and where it is.
-- `~/.codex/logs_2.sqlite` provides the latest local websocket `codex.rate_limits` event.
+- `~/.codex/logs_2.sqlite` provides the latest local websocket `codex.rate_limits` event and recent response `usage` token counters.
 
 It does not require an OpenAI API key, does not read `~/.codex/auth.json`, and does not call a remote usage endpoint. It does not send pet images, screenshots, prompts, or repo contents anywhere.
 

@@ -61,9 +61,9 @@ launchctl print "gui/$(id -u)/com.codex-pet.limit-rings" >/dev/null
 The rings read:
 
 - `~/.codex/.codex-global-state.json` for `electron-avatar-overlay-open` and `electron-avatar-overlay-bounds.mascot`.
-- `~/.codex/logs_2.sqlite` for the newest local websocket `codex.rate_limits` event from `target = 'codex_api::endpoint::responses_websocket'`.
+- `~/.codex/logs_2.sqlite` for the newest local websocket `codex.rate_limits` event and recent response `usage` token counters from `target = 'codex_api::endpoint::responses_websocket'`.
 
-The app should not read `~/.codex/auth.json` or call a remote usage endpoint. The top usage bar or outer ring is the short-window remaining percentage. The bottom usage bar or inner ring is the weekly remaining percentage. The menu summary should say `Local` and include the local log age when the local log value is active. Display style, position offsets, and bar-width presets are controlled from the menu and persisted in `UserDefaults`.
+The app should not read `~/.codex/auth.json` or call a remote usage endpoint. The top usage bar or outer ring is the short-window remaining percentage. The bottom usage bar or inner ring is the weekly remaining percentage. The menu summary should say `Local` and include the local log age when the local log value is active. The menu can show recent per-thread usage token counts and the latest limit delta, and the overlay can show a short toast for newly observed turn usage. Display style, position offsets, and bar-width presets are controlled from the menu and persisted in `UserDefaults`.
 
 Pet wakeups and moves are driven by a filesystem watcher on `~/.codex/.codex-global-state.json`, with a slow fallback timer for missed events. Keep that event-driven path intact when changing frame-following behavior.
 Use `--no-mouse-monitor` when the user wants no global mouse event monitoring; this disables drag-follow while the usage overlay remains visible. Set `CODEX_PET_LIMIT_RINGS_NO_MOUSE_MONITOR=1` for helper-script launches or installs.
