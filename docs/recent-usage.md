@@ -42,7 +42,7 @@ It does not send prompts, screenshots, repository contents, token counters, or l
 
 ## Menu Shape
 
-The menu shows up to three recent threads:
+The menu shows up to three recent turn groups:
 
 ```text
 Recent turns
@@ -58,14 +58,17 @@ Thread IDs are shortened to a prefix because the full IDs are long and not usefu
 
 ## Overlay Toast
 
-The app also polls recent usage from local logs every few seconds. When it sees a new latest turn or a changed usage total for that turn, it shows a short toast near the current bars or rings:
+The app also polls recent usage from local logs every few seconds. When it sees a new or changed turn group, it shows or updates a short stacked toast card near the current bars or rings:
 
 ```text
-Last turn 2.3k
-In 12.4k  C 10.8k  Out 0.7k
+W0/a327 2c  N4.0k
+I258k  Ca254k  O298
+
+W1/8089 1c  N7.9k
+I7.8k  Ca0  O126
 ```
 
-The toast is intentionally temporary. It appears for a few seconds and is replaced by the next observed turn total. The menu remains the detailed view; the toast is only a glanceable notification.
+The toasts are intentionally temporary. `W0` through `W9` are reusable local window slots assigned by `thread_id`; the suffix after `/` is the shortened thread id for debugging. Each card is the latest changed turn for one window. A newer turn in the same window replaces that window's previous toast card, so multiple cards with the same `W0/a327` label should not stack. Old groups are ignored for toast purposes even if they remain in the menu. `2c` means two response usage calls were observed for that card's turn group. The menu remains the detailed view; the toasts are only glanceable notifications.
 
 ## Token Fields
 
@@ -85,9 +88,11 @@ Net = max(0, In - Cached) + Out
 
 ## Thread Grouping
 
-The app groups recent usage by `thread_id` from the local log row. This keeps simultaneous Codex windows mostly separate.
+The app groups recent usage by `thread_id` plus `turn_id` when available. If `turn_id` is not available, it falls back to the local submission id.
 
-For each recent thread, the app uses the newest turn it finds. If that newest turn has multiple usage events with the same `turn_id`, the app sums them.
+For readability, the app maps recent `thread_id` values to `W0` through `W9`. Existing mappings are stored in `UserDefaults`, and the oldest inactive slot is reused when all ten slots are occupied.
+
+For each recent `thread_id + turn_id` group, the app sums multiple usage events and shows the count as `2c`, `3c`, and so on.
 
 This is intentionally conservative:
 
@@ -95,7 +100,7 @@ This is intentionally conservative:
 - It avoids showing a global token total as if it belonged to one question.
 - It does not try to infer full conversation history or inspect prompt text.
 
-If a usage event is missing `thread_id`, the app skips it for the recent thread list.
+If a usage event is missing `thread_id`, the app skips it for the recent turn list.
 
 ## Limit Delta
 
@@ -122,12 +127,12 @@ This is an account-level change. It is not attributed to a specific thread. If s
 - `Net` is a useful estimate, not an official usage formula.
 - Cached token treatment can differ from the way a plan's limit is decremented.
 - A single user-visible question can trigger multiple model calls.
-- The app can aggregate multiple usage events inside the latest `turn_id`, but it does not inspect prompt text to infer semantic question boundaries.
+- The app can aggregate multiple usage events inside a `turn_id`, but it does not inspect prompt text to infer semantic question boundaries.
 - `Limit delta` is account-level and can be ambiguous during simultaneous work.
 
 The safest interpretation is:
 
 ```text
-Recent turns = local token counters grouped by thread
+Recent turns = local token counters grouped by thread + turn
 Limit delta = account-level remaining-limit movement
 ```

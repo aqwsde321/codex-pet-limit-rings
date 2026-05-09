@@ -25,9 +25,7 @@ struct LimitState {
     static let empty = LimitState(planType: nil, primary: nil, secondary: nil, additional: [], observedAt: Date(), source: "none")
 }
 
-struct UsageTurnSummary {
-    var threadID: String
-    var turnID: String?
+struct UsageCallSummary {
     var observedAt: Date
     var inputTokens: Int64
     var cachedTokens: Int64
@@ -35,6 +33,25 @@ struct UsageTurnSummary {
 
     var netTokens: Int64 {
         max(0, inputTokens - cachedTokens) + outputTokens
+    }
+}
+
+struct UsageTurnSummary {
+    var threadID: String
+    var turnID: String?
+    var windowLabel: String?
+    var observedAt: Date
+    var inputTokens: Int64
+    var cachedTokens: Int64
+    var outputTokens: Int64
+    var calls: [UsageCallSummary]
+
+    var netTokens: Int64 {
+        max(0, inputTokens - cachedTokens) + outputTokens
+    }
+
+    var callCount: Int {
+        max(calls.count, 1)
     }
 }
 
@@ -50,6 +67,12 @@ struct UsageDetails {
     static let empty = UsageDetails(recentTurns: [], limitDelta: nil)
 }
 
+struct ThreadWindowSlot: Codable {
+    var threadID: String
+    var slot: Int
+    var lastSeen: TimeInterval
+}
+
 private let limitStatePollInterval: TimeInterval = 20.0
 private let petFrameFallbackPollInterval: TimeInterval = 2.0
 private let petFrameStateDebounceInterval: TimeInterval = 0.035
@@ -58,12 +81,15 @@ private let dragLiveMismatchTolerance: CGFloat = 96.0
 private let stateCheckPulseDuration: TimeInterval = 0.85
 private let usageToastPollInterval: TimeInterval = 2.0
 private let usageToastDuration: TimeInterval = 8.0
-private let usageToastWidth: CGFloat = 178.0
+private let usageToastMaxAge: TimeInterval = 60.0
+private let usageToastWidth: CGFloat = 224.0
 private let ringsVisibleDefaultsKey = "CodexPetLimitRings.ringsVisible"
 private let barsOffsetXDefaultsKey = "CodexPetLimitRings.barsOffsetX"
 private let barsOffsetYDefaultsKey = "CodexPetLimitRings.barsOffsetY"
 private let barWidthPresetDefaultsKey = "CodexPetLimitRings.barWidthPreset"
 private let displayStyleDefaultsKey = "CodexPetLimitRings.displayStyle"
+private let threadWindowSlotsDefaultsKey = "CodexPetLimitRings.threadWindowSlots"
+private let threadWindowSlotCount = 10
 private let usageBarPositionStep: CGFloat = 4.0
 
 enum UsageDisplayStyle: String, CaseIterable {
@@ -177,6 +203,15 @@ final class LimitStateReader {
         var inputTokens: Int64
         var cachedTokens: Int64
         var outputTokens: Int64
+
+        func callSummary() -> UsageCallSummary {
+            UsageCallSummary(
+                observedAt: observedAt,
+                inputTokens: inputTokens,
+                cachedTokens: cachedTokens,
+                outputTokens: outputTokens
+            )
+        }
     }
 
     private struct UsageAccumulator {
@@ -186,6 +221,7 @@ final class LimitStateReader {
         var inputTokens: Int64
         var cachedTokens: Int64
         var outputTokens: Int64
+        var calls: [UsageCallSummary]
 
         var canAggregateOlderSamples: Bool {
             turnID != nil
@@ -195,16 +231,19 @@ final class LimitStateReader {
             inputTokens += sample.inputTokens
             cachedTokens += sample.cachedTokens
             outputTokens += sample.outputTokens
+            calls.append(sample.callSummary())
         }
 
         func summary() -> UsageTurnSummary {
             UsageTurnSummary(
                 threadID: threadID,
                 turnID: turnID,
+                windowLabel: nil,
                 observedAt: observedAt,
                 inputTokens: inputTokens,
                 cachedTokens: cachedTokens,
-                outputTokens: outputTokens
+                outputTokens: outputTokens,
+                calls: calls.sorted { $0.observedAt < $1.observedAt }
             )
         }
     }
@@ -290,7 +329,7 @@ final class LimitStateReader {
         }
         defer { sqlite3_finalize(statement) }
 
-        var orderedThreadIDs: [String] = []
+        var orderedTurnKeys: [String] = []
         var accumulators: [String: UsageAccumulator] = [:]
 
         while sqlite3_step(statement) == SQLITE_ROW {
@@ -303,10 +342,6 @@ final class LimitStateReader {
             guard let threadID, !threadID.isEmpty else {
                 continue
             }
-            if accumulators[threadID] == nil, orderedThreadIDs.count >= 3 {
-                continue
-            }
-
             let ts = sqlite3_column_int64(statement, 0)
             let tsNanos = sqlite3_column_int64(statement, 1)
             let observedAt = Date(timeIntervalSince1970: TimeInterval(ts) + TimeInterval(tsNanos) / 1_000_000_000.0)
@@ -314,26 +349,38 @@ final class LimitStateReader {
                 continue
             }
 
-            if var accumulator = accumulators[threadID] {
+            let turnKey = usageGroupKey(threadID: threadID, turnID: sample.turnID, observedAt: sample.observedAt)
+            if var accumulator = accumulators[turnKey] {
                 if accumulator.canAggregateOlderSamples, accumulator.turnID == sample.turnID {
                     accumulator.add(sample)
-                    accumulators[threadID] = accumulator
+                    accumulators[turnKey] = accumulator
                 }
                 continue
             }
+            if orderedTurnKeys.count >= 3 {
+                continue
+            }
 
-            orderedThreadIDs.append(threadID)
-            accumulators[threadID] = UsageAccumulator(
+            orderedTurnKeys.append(turnKey)
+            accumulators[turnKey] = UsageAccumulator(
                 threadID: threadID,
                 turnID: sample.turnID,
                 observedAt: sample.observedAt,
                 inputTokens: sample.inputTokens,
                 cachedTokens: sample.cachedTokens,
-                outputTokens: sample.outputTokens
+                outputTokens: sample.outputTokens,
+                calls: [sample.callSummary()]
             )
         }
 
-        return orderedThreadIDs.compactMap { accumulators[$0]?.summary() }
+        return orderedTurnKeys.compactMap { accumulators[$0]?.summary() }
+    }
+
+    private func usageGroupKey(threadID: String, turnID: String?, observedAt: Date) -> String {
+        [
+            threadID,
+            turnID ?? String(observedAt.timeIntervalSince1970)
+        ].joined(separator: "|")
     }
 
     private func readLimitDelta(db: OpaquePointer) -> LimitDelta? {
@@ -413,7 +460,9 @@ final class LimitStateReader {
 
         return UsageSample(
             threadID: threadID,
-            turnID: parseDelimitedValue(after: "turn_id=", in: body) ?? parseDelimitedValue(after: "turn.id=", in: body),
+            turnID: parseDelimitedValue(after: "turn_id=", in: body)
+                ?? parseDelimitedValue(after: "turn.id=", in: body)
+                ?? parseDelimitedValue(after: "submission.id=", in: body),
             observedAt: observedAt,
             inputTokens: inputTokens,
             cachedTokens: usage.input_tokens_details?.cached_tokens ?? 0,
@@ -427,6 +476,16 @@ final class LimitStateReader {
         }
 
         var index = markerRange.upperBound
+        if index < body.endIndex, body[index] == "\"" {
+            index = body.index(after: index)
+            let start = index
+            while index < body.endIndex, body[index] != "\"" {
+                index = body.index(after: index)
+            }
+            guard start < index else { return nil }
+            return String(body[start..<index])
+        }
+
         let start = index
         while index < body.endIndex {
             let char = body[index]
@@ -622,7 +681,7 @@ struct LimitRingRenderer {
     var displayStyle: UsageDisplayStyle
     var barWidth: CGFloat
     var checkPulse: CGFloat
-    var usageToast: UsageTurnSummary?
+    var usageToastTurns: [UsageTurnSummary]
 
     func draw(in rect: CGRect) {
         guard let context = NSGraphicsContext.current?.cgContext else { return }
@@ -636,8 +695,8 @@ struct LimitRingRenderer {
         case .rings:
             drawRings(context, in: rect)
         }
-        if let usageToast {
-            drawUsageToast(context, in: rect, turn: usageToast)
+        if !usageToastTurns.isEmpty {
+            drawUsageToast(context, in: rect, turns: usageToastTurns)
         }
         context.restoreGState()
     }
@@ -956,30 +1015,57 @@ struct LimitRingRenderer {
         context.restoreGState()
     }
 
-    private func drawUsageToast(_ context: CGContext, in rect: CGRect, turn: UsageTurnSummary) {
-        let title = NSAttributedString(
-            string: "Last turn \(formatTokenCount(turn.netTokens))",
-            attributes: toastTitleAttributes()
-        )
-        let detail = NSAttributedString(
-            string: "In \(formatTokenCount(turn.inputTokens))  C \(formatTokenCount(turn.cachedTokens))  Out \(formatTokenCount(turn.outputTokens))",
-            attributes: toastDetailAttributes()
-        )
-        let titleSize = title.size()
-        let detailSize = detail.size()
-        let width = min(max(126.0, ceil(max(titleSize.width, detailSize.width) + 18.0)), rect.width - 8.0)
-        let height: CGFloat = 38.0
+    private func drawUsageToast(_ context: CGContext, in rect: CGRect, turns: [UsageTurnSummary]) {
+        let cards = turns.prefix(3).map { turn -> (rows: [NSAttributedString], sizes: [CGSize], height: CGFloat) in
+            let rows = usageToastCardRows(for: turn)
+            let sizes = rows.map { $0.size() }
+            let contentHeight = sizes.map(\.height).reduce(0.0, +) + CGFloat(max(0, rows.count - 1)) * 1.0
+            return (rows, sizes, ceil(contentHeight + 11.0))
+        }
+        guard !cards.isEmpty else { return }
+
+        let cardGap: CGFloat = 5.0
+        let contentWidth = cards.flatMap(\.sizes).map(\.width).max() ?? 0.0
+        let width = min(max(146.0, ceil(contentWidth + 18.0)), rect.width - 8.0)
+        let stackHeight = cards.map(\.height).reduce(0.0, +) + CGFloat(cards.count - 1) * cardGap
         let y: CGFloat
         switch displayStyle {
         case .bars:
-            y = min(rect.height - height - 8.0, 58.0)
+            y = min(rect.height - stackHeight - 8.0, 58.0)
         case .rings:
-            y = rect.height - height - 8.0
+            y = rect.height - stackHeight - 8.0
         }
-        let badgeRect = CGRect(x: rect.midX - width / 2.0, y: max(6.0, y), width: width, height: height)
+        let stackBottom = max(6.0, y)
 
         context.saveGState()
-        let path = CGPath(roundedRect: badgeRect, cornerWidth: 8.0, cornerHeight: 8.0, transform: nil)
+        var cardTop = stackBottom + stackHeight
+        for card in cards {
+            cardTop -= card.height
+            let badgeRect = CGRect(x: rect.midX - width / 2.0, y: cardTop, width: width, height: card.height)
+            drawUsageToastCard(context, rect: badgeRect, rows: card.rows, sizes: card.sizes)
+            cardTop -= cardGap
+        }
+        context.restoreGState()
+    }
+
+    private func usageToastCardRows(for turn: UsageTurnSummary) -> [NSAttributedString] {
+        let text = NSMutableAttributedString(string: "")
+        text.append(NSAttributedString(string: "\(shortUsageID(for: turn)) ", attributes: toastDetailAttributes()))
+        text.append(NSAttributedString(string: "\(turn.callCount)c", attributes: toastMetricAttributes(color: toastNetColor(), size: 9.0)))
+        text.append(NSAttributedString(string: "  ", attributes: toastDetailAttributes()))
+        appendUsageMetric("N", formatTokenCount(turn.netTokens), color: toastNetColor(), size: 9.0, to: text)
+
+        let detail = NSMutableAttributedString(string: "")
+        appendUsageMetric("I", formatTokenCount(turn.inputTokens), color: toastInputColor(), to: detail)
+        detail.append(NSAttributedString(string: "  ", attributes: toastDetailAttributes()))
+        appendUsageMetric("Ca", formatTokenCount(turn.cachedTokens), color: toastCachedColor(), to: detail)
+        detail.append(NSAttributedString(string: "  ", attributes: toastDetailAttributes()))
+        appendUsageMetric("O", formatTokenCount(turn.outputTokens), color: toastOutputColor(), to: detail)
+        return [text, detail]
+    }
+
+    private func drawUsageToastCard(_ context: CGContext, rect: CGRect, rows: [NSAttributedString], sizes: [CGSize]) {
+        let path = CGPath(roundedRect: rect, cornerWidth: 8.0, cornerHeight: 8.0, transform: nil)
         context.setShadow(offset: CGSize(width: 0.0, height: -1.0), blur: 9.0, color: NSColor.black.withAlphaComponent(0.24).cgColor)
         context.setFillColor(NSColor(calibratedWhite: 0.08, alpha: 0.72).cgColor)
         context.addPath(path)
@@ -990,9 +1076,34 @@ struct LimitRingRenderer {
         context.addPath(path)
         context.strokePath()
 
-        title.draw(at: CGPoint(x: badgeRect.midX - titleSize.width / 2.0, y: badgeRect.maxY - titleSize.height - 6.0))
-        detail.draw(at: CGPoint(x: badgeRect.midX - detailSize.width / 2.0, y: badgeRect.minY + 5.0))
-        context.restoreGState()
+        var rowY = rect.maxY - 5.5
+        for (row, size) in zip(rows, sizes) {
+            rowY -= size.height
+            row.draw(at: CGPoint(x: rect.minX + 9.0, y: rowY))
+            rowY -= 1.0
+        }
+    }
+
+    private func shortUsageID(for turn: UsageTurnSummary) -> String {
+        let thread = compactID(turn.threadID)
+        if let windowLabel = turn.windowLabel, !windowLabel.isEmpty {
+            return "\(windowLabel)/\(thread)"
+        }
+        guard let turnID = turn.turnID, !turnID.isEmpty else { return thread }
+        return "\(thread)/\(compactID(turnID))"
+    }
+
+    private func compactID(_ id: String) -> String {
+        let compact = id.replacingOccurrences(of: "-", with: "")
+        guard compact.count > 4 else {
+            return compact
+        }
+        return String(compact.suffix(4))
+    }
+
+    private func appendUsageMetric(_ label: String, _ value: String, color: NSColor, size: CGFloat = 8.2, to text: NSMutableAttributedString) {
+        text.append(NSAttributedString(string: label, attributes: toastMetricLabelAttributes()))
+        text.append(NSAttributedString(string: value, attributes: toastMetricAttributes(color: color, size: size)))
     }
 
     private func drawModelLimitDots(_ context: CGContext, center: CGPoint, radius: CGFloat) {
@@ -1117,18 +1228,41 @@ struct LimitRingRenderer {
         ]
     }
 
-    private func toastTitleAttributes() -> [NSAttributedString.Key: Any] {
+    private func toastDetailAttributes() -> [NSAttributedString.Key: Any] {
         [
-            .font: NSFont.monospacedSystemFont(ofSize: 10.4, weight: .semibold),
-            .foregroundColor: NSColor(calibratedWhite: 1.0, alpha: 0.94)
+            .font: NSFont.monospacedSystemFont(ofSize: 8.2, weight: .semibold),
+            .foregroundColor: NSColor(calibratedWhite: 1.0, alpha: 0.70)
         ]
     }
 
-    private func toastDetailAttributes() -> [NSAttributedString.Key: Any] {
+    private func toastMetricLabelAttributes() -> [NSAttributedString.Key: Any] {
         [
-            .font: NSFont.systemFont(ofSize: 8.2, weight: .semibold),
-            .foregroundColor: NSColor(calibratedWhite: 1.0, alpha: 0.70)
+            .font: NSFont.monospacedSystemFont(ofSize: 8.2, weight: .semibold),
+            .foregroundColor: NSColor(calibratedWhite: 1.0, alpha: 0.48)
         ]
+    }
+
+    private func toastMetricAttributes(color: NSColor, size: CGFloat) -> [NSAttributedString.Key: Any] {
+        [
+            .font: NSFont.monospacedSystemFont(ofSize: size, weight: .semibold),
+            .foregroundColor: color
+        ]
+    }
+
+    private func toastNetColor() -> NSColor {
+        NSColor(calibratedRed: 0.24, green: 0.92, blue: 0.74, alpha: 0.96)
+    }
+
+    private func toastInputColor() -> NSColor {
+        NSColor(calibratedRed: 0.36, green: 0.70, blue: 1.00, alpha: 0.94)
+    }
+
+    private func toastCachedColor() -> NSColor {
+        NSColor(calibratedWhite: 1.0, alpha: 0.58)
+    }
+
+    private func toastOutputColor() -> NSColor {
+        NSColor(calibratedRed: 1.00, green: 0.72, blue: 0.30, alpha: 0.94)
     }
 
 }
@@ -1146,14 +1280,14 @@ final class LimitRingView: NSView {
     var checkPulse: CGFloat = 0.0 {
         didSet { needsDisplay = true }
     }
-    var usageToast: UsageTurnSummary? {
+    var usageToastTurns: [UsageTurnSummary] = [] {
         didSet { needsDisplay = true }
     }
 
     override var isOpaque: Bool { false }
 
     override func draw(_ dirtyRect: NSRect) {
-        LimitRingRenderer(state: state, displayStyle: displayStyle, barWidth: barWidth, checkPulse: checkPulse, usageToast: usageToast).draw(in: bounds)
+        LimitRingRenderer(state: state, displayStyle: displayStyle, barWidth: barWidth, checkPulse: checkPulse, usageToastTurns: usageToastTurns).draw(in: bounds)
     }
 }
 
@@ -1205,7 +1339,8 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
     private var stateReadInFlight = false
     private var usageReadInFlight = false
     private var hasPrimedUsageToast = false
-    private var lastUsageToastSignature: String?
+    private var lastUsageToastSignatures: [String: String] = [:]
+    private var threadWindowSlots: [String: ThreadWindowSlot] = [:]
 
     init(config: LimitRingsConfig) {
         self.config = config
@@ -1219,6 +1354,7 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
             height: CGFloat(UserDefaults.standard.double(forKey: barsOffsetYDefaultsKey))
         )
         self.barWidthPreset = UsageBarWidthPreset(rawValue: UserDefaults.standard.string(forKey: barWidthPresetDefaultsKey) ?? "") ?? .normal
+        self.threadWindowSlots = Self.loadThreadWindowSlots()
         self.panel = NSPanel(
             contentRect: CGRect(origin: .zero, size: CGSize(width: config.fallbackSize, height: config.fallbackSize)),
             styleMask: [.borderless, .nonactivatingPanel],
@@ -1275,7 +1411,7 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
         }
     }
 
-    private func updateState() {
+    private func updateState(showToast: Bool = true) {
         guard !stateReadInFlight else { return }
         stateReadInFlight = true
         stateQueue.async { [weak self] in
@@ -1284,7 +1420,7 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
             let usageDetails = self.stateReader.readUsageDetails()
             DispatchQueue.main.async {
                 self.ringView.state = state
-                self.applyUsageDetails(usageDetails, showToast: true)
+                self.applyUsageDetails(usageDetails, showToast: showToast)
                 self.updateSummaryMenuItem()
                 self.stateReadInFlight = false
                 self.triggerStateCheckPulse()
@@ -1540,63 +1676,174 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
 
     func menuWillOpen(_ menu: NSMenu) {
         refreshUsageDetailsNow()
-        updateState()
+        updateState(showToast: false)
     }
 
     private func refreshUsageDetailsNow() {
-        applyUsageDetails(stateReader.readUsageDetails(), showToast: true)
+        applyUsageDetails(stateReader.readUsageDetails(), showToast: false)
     }
 
     private func applyUsageDetails(_ usageDetails: UsageDetails, showToast: Bool) {
-        self.usageDetails = usageDetails
+        let labeledUsageDetails = applyWindowLabels(to: usageDetails)
+        self.usageDetails = labeledUsageDetails
         updateUsageDetailsMenuItems()
         if showToast {
-            updateUsageToast(from: usageDetails)
+            updateUsageToast(from: labeledUsageDetails)
         }
     }
 
+    private func applyWindowLabels(to usageDetails: UsageDetails) -> UsageDetails {
+        var changed = false
+        let turns = usageDetails.recentTurns.map { turn -> UsageTurnSummary in
+            var turn = turn
+            turn.windowLabel = windowLabel(forThreadID: turn.threadID, observedAt: turn.observedAt, changed: &changed)
+            return turn
+        }
+        if changed {
+            saveThreadWindowSlots()
+        }
+        return UsageDetails(recentTurns: turns, limitDelta: usageDetails.limitDelta)
+    }
+
+    private func windowLabel(forThreadID threadID: String, observedAt: Date, changed: inout Bool) -> String {
+        let lastSeen = observedAt.timeIntervalSince1970
+        if var entry = threadWindowSlots[threadID] {
+            if lastSeen > entry.lastSeen {
+                entry.lastSeen = lastSeen
+                threadWindowSlots[threadID] = entry
+                changed = true
+            }
+            return "W\(entry.slot)"
+        }
+
+        let slot: Int
+        let usedSlots = Set(threadWindowSlots.values.map(\.slot))
+        if let freeSlot = (0..<threadWindowSlotCount).first(where: { !usedSlots.contains($0) }) {
+            slot = freeSlot
+        } else if let evicted = threadWindowSlots.values.min(by: { $0.lastSeen < $1.lastSeen }) {
+            slot = evicted.slot
+            threadWindowSlots.removeValue(forKey: evicted.threadID)
+        } else {
+            slot = 0
+        }
+
+        threadWindowSlots[threadID] = ThreadWindowSlot(threadID: threadID, slot: slot, lastSeen: lastSeen)
+        changed = true
+        return "W\(slot)"
+    }
+
+    private static func loadThreadWindowSlots() -> [String: ThreadWindowSlot] {
+        guard let data = UserDefaults.standard.data(forKey: threadWindowSlotsDefaultsKey),
+              let slots = try? JSONDecoder().decode([ThreadWindowSlot].self, from: data) else {
+            return [:]
+        }
+
+        var result: [String: ThreadWindowSlot] = [:]
+        var usedSlots = Set<Int>()
+        for slot in slots.sorted(by: { $0.lastSeen > $1.lastSeen }) {
+            guard (0..<threadWindowSlotCount).contains(slot.slot),
+                  !slot.threadID.isEmpty,
+                  !usedSlots.contains(slot.slot) else {
+                continue
+            }
+            result[slot.threadID] = slot
+            usedSlots.insert(slot.slot)
+            if result.count >= threadWindowSlotCount {
+                break
+            }
+        }
+        return result
+    }
+
+    private func saveThreadWindowSlots() {
+        let slots = threadWindowSlots.values.sorted {
+            if $0.slot == $1.slot {
+                return $0.lastSeen > $1.lastSeen
+            }
+            return $0.slot < $1.slot
+        }
+        guard let data = try? JSONEncoder().encode(slots) else {
+            return
+        }
+        UserDefaults.standard.set(data, forKey: threadWindowSlotsDefaultsKey)
+    }
+
     private func updateUsageToast(from usageDetails: UsageDetails) {
-        guard let latestTurn = usageDetails.recentTurns.first else {
+        let turns = Array(usageDetails.recentTurns.prefix(3))
+        guard !turns.isEmpty else {
+            if !hasPrimedUsageToast {
+                hasPrimedUsageToast = true
+            }
             return
         }
 
-        let signature = usageToastSignature(for: latestTurn)
+        let signatures = Dictionary(uniqueKeysWithValues: turns.map { (usageToastKey(for: $0), usageToastSignature(for: $0)) })
         if !hasPrimedUsageToast {
             hasPrimedUsageToast = true
-            lastUsageToastSignature = signature
+            lastUsageToastSignatures = signatures
             return
         }
-        guard signature != lastUsageToastSignature else {
+        let now = Date()
+        let changedTurns = turns.filter { turn in
+            let key = usageToastKey(for: turn)
+            return now.timeIntervalSince(turn.observedAt) <= usageToastMaxAge
+                && lastUsageToastSignatures[key] != signatures[key]
+        }
+        guard !changedTurns.isEmpty else {
             return
         }
 
-        lastUsageToastSignature = signature
-        showUsageToast(latestTurn)
+        lastUsageToastSignatures = signatures
+        showUsageToast(changedTurns)
+    }
+
+    private func usageToastKey(for turn: UsageTurnSummary) -> String {
+        [
+            turn.threadID,
+            turn.turnID ?? String(turn.observedAt.timeIntervalSince1970)
+        ].joined(separator: "|")
     }
 
     private func usageToastSignature(for turn: UsageTurnSummary) -> String {
         [
             turn.threadID,
             turn.turnID ?? String(turn.observedAt.timeIntervalSince1970),
+            String(turn.callCount),
             String(turn.inputTokens),
             String(turn.cachedTokens),
             String(turn.outputTokens)
         ].joined(separator: "|")
     }
 
-    private func showUsageToast(_ turn: UsageTurnSummary) {
+    private func showUsageToast(_ turns: [UsageTurnSummary]) {
         usageToastTimer?.invalidate()
-        ringView.usageToast = turn
+        let updatedTurns = latestToastTurnsByThread(turns)
+        let updatedThreadIDs = Set(updatedTurns.map(\.threadID))
+        let existingTurns = ringView.usageToastTurns.filter { !updatedThreadIDs.contains($0.threadID) }
+        ringView.usageToastTurns = Array((updatedTurns + existingTurns).prefix(3))
         if ringsVisible, currentPetFrameAppKit != nil {
             panel.orderFrontRegardless()
         }
 
         let timer = Timer(timeInterval: usageToastDuration, repeats: false) { [weak self] _ in
-            self?.ringView.usageToast = nil
+            self?.ringView.usageToastTurns = []
             self?.usageToastTimer = nil
         }
         usageToastTimer = timer
         RunLoop.main.add(timer, forMode: .common)
+    }
+
+    private func latestToastTurnsByThread(_ turns: [UsageTurnSummary]) -> [UsageTurnSummary] {
+        var seenThreadIDs = Set<String>()
+        var result: [UsageTurnSummary] = []
+        for turn in turns.sorted(by: { $0.observedAt > $1.observedAt }) {
+            guard !seenThreadIDs.contains(turn.threadID) else {
+                continue
+            }
+            seenThreadIDs.insert(turn.threadID)
+            result.append(turn)
+        }
+        return result
     }
 
     private func installUsageDetailsMenuItems(in menu: NSMenu) {
@@ -1731,9 +1978,9 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
 
                 let turn = turns[turnIndex]
                 if index % 2 == 0 {
-                    item.title = "\(threadPrefix(turn.threadID))  Net \(formatTokenCount(turn.netTokens))"
+                    item.title = "\(windowLabelPrefix(for: turn))  \(turn.callCount)c  N \(formatTokenCount(turn.netTokens))"
                 } else {
-                    item.title = "  In \(formatTokenCount(turn.inputTokens))  Cached \(formatTokenCount(turn.cachedTokens))  Out \(formatTokenCount(turn.outputTokens))"
+                    item.title = "  " + formatUsageCallPreview(turn)
                 }
                 item.isHidden = false
             }
@@ -1826,7 +2073,7 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
 
     @objc private func refreshNow(_ sender: NSMenuItem) {
         refreshUsageDetailsNow()
-        updateState()
+        updateState(showToast: false)
         updateFrame()
         updateRingVisibility()
     }
@@ -2166,6 +2413,32 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
         return prefix.count == threadID.count ? String(prefix) : "\(prefix)..."
     }
 
+    private func windowLabelPrefix(for turn: UsageTurnSummary) -> String {
+        let thread = threadPrefix(turn.threadID)
+        guard let windowLabel = turn.windowLabel, !windowLabel.isEmpty else {
+            return thread
+        }
+        return "\(windowLabel) \(thread)"
+    }
+
+    private func formatUsageCallPreview(_ turn: UsageTurnSummary) -> String {
+        let calls = Array((turn.calls.isEmpty ? [
+            UsageCallSummary(
+                observedAt: turn.observedAt,
+                inputTokens: turn.inputTokens,
+                cachedTokens: turn.cachedTokens,
+                outputTokens: turn.outputTokens
+            )
+        ] : turn.calls).prefix(3))
+        var parts = calls.enumerated().map { index, call in
+            "#\(index + 1) N\(formatTokenCount(call.netTokens))"
+        }
+        if turn.callCount > calls.count {
+            parts.append("+\(turn.callCount - calls.count)")
+        }
+        return parts.joined(separator: "  ")
+    }
+
     private func formatAge(since date: Date) -> String {
         let seconds = max(0, Date().timeIntervalSince(date))
         if seconds < 60 {
@@ -2193,7 +2466,7 @@ func renderPreview(config: LimitRingsConfig) -> Bool {
     image.lockFocus()
     NSColor.clear.setFill()
     NSRect(origin: .zero, size: size).fill()
-    LimitRingRenderer(state: state, displayStyle: .bars, barWidth: UsageBarWidthPreset.normal.width, checkPulse: 0.55, usageToast: nil).draw(in: CGRect(origin: .zero, size: size))
+    LimitRingRenderer(state: state, displayStyle: .bars, barWidth: UsageBarWidthPreset.normal.width, checkPulse: 0.55, usageToastTurns: []).draw(in: CGRect(origin: .zero, size: size))
     image.unlockFocus()
 
     guard let previewPath = config.previewPath,
