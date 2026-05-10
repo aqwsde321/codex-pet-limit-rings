@@ -83,6 +83,9 @@ private let usageToastPollInterval: TimeInterval = 2.0
 private let usageToastDuration: TimeInterval = 8.0
 private let usageToastMaxAge: TimeInterval = 60.0
 private let usageToastWidth: CGFloat = 192.0
+private let usageBarTopPadding: CGFloat = 132.0
+private let usageBarBottomPadding: CGFloat = 56.0
+private let usageRingTopPadding: CGFloat = 132.0
 private let ringsVisibleDefaultsKey = "CodexPetLimitRings.ringsVisible"
 private let barsOffsetXDefaultsKey = "CodexPetLimitRings.barsOffsetX"
 private let barsOffsetYDefaultsKey = "CodexPetLimitRings.barsOffsetY"
@@ -709,8 +712,9 @@ struct LimitRingRenderer {
     }
 
     private func drawRings(_ context: CGContext, in rect: CGRect) {
-        let center = CGPoint(x: rect.midX, y: rect.midY)
-        let minSide = min(rect.width, rect.height)
+        let ringAreaHeight = max(1.0, rect.height - usageRingTopPadding)
+        let center = CGPoint(x: rect.midX, y: ringAreaHeight / 2.0)
+        let minSide = min(rect.width, ringAreaHeight)
         let urgency = max(urgency(for: state.primary), urgency(for: state.secondary))
         let phase = Double(1.0 - checkPulse)
         let breathe = max(CGFloat((sin(phase * 2.0 * .pi) + 1.0) * 0.5), checkPulse)
@@ -1030,16 +1034,24 @@ struct LimitRingRenderer {
         let contentWidth = cards.flatMap(\.sizes).map(\.width).max() ?? 0.0
         let width = min(max(126.0, ceil(contentWidth + 14.0)), rect.width - 8.0)
         let stackHeight = cards.map(\.height).reduce(0.0, +) + CGFloat(cards.count - 1) * cardGap
-        let y = rect.height - stackHeight - 8.0
-        let stackBottom = max(6.0, y)
+        let stackBottom: CGFloat
+        switch displayStyle {
+        case .bars:
+            let petTop = rect.height - usageBarTopPadding
+            stackBottom = max(6.0, min(rect.height - stackHeight - 6.0, petTop + 8.0))
+        case .rings:
+            let ringTop = rect.height - usageRingTopPadding
+            let firstCardHeight = cards.first?.height ?? 0.0
+            let previousStart = ringTop - firstCardHeight - 8.0
+            stackBottom = max(6.0, min(rect.height - stackHeight - 6.0, previousStart))
+        }
 
         context.saveGState()
-        var cardTop = stackBottom + stackHeight
+        var cardBottom = stackBottom
         for card in cards {
-            cardTop -= card.height
-            let badgeRect = CGRect(x: rect.midX - width / 2.0, y: cardTop, width: width, height: card.height)
+            let badgeRect = CGRect(x: rect.midX - width / 2.0, y: cardBottom, width: width, height: card.height)
             drawUsageToastCard(context, rect: badgeRect, rows: card.rows, sizes: card.sizes)
-            cardTop -= cardGap
+            cardBottom += card.height + cardGap
         }
         context.restoreGState()
     }
@@ -1594,10 +1606,14 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
         case .bars:
             topLeft = CGPoint(
                 x: petFrame.midX - size.width / 2,
-                y: petFrame.minY - ringOverlayPadding
+                y: petFrame.minY - usageBarTopPadding
             )
         case .rings:
-            topLeft = CGPoint(x: petFrame.midX - size.width / 2, y: petFrame.midY - size.height / 2)
+            let side = ringOverlaySide(for: petFrame)
+            topLeft = CGPoint(
+                x: petFrame.midX - size.width / 2,
+                y: petFrame.midY - side / 2 - usageRingTopPadding
+            )
         }
         let origin = appKitOriginFromTopLeft(topLeft, size: size)
 
@@ -1611,10 +1627,11 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
         case .bars:
             origin = CGPoint(
                 x: petFrame.midX - size.width / 2,
-                y: petFrame.maxY + ringOverlayPadding - size.height
+                y: petFrame.maxY + usageBarTopPadding - size.height
             )
         case .rings:
-            origin = CGPoint(x: petFrame.midX - size.width / 2, y: petFrame.midY - size.height / 2)
+            let side = ringOverlaySide(for: petFrame)
+            origin = CGPoint(x: petFrame.midX - size.width / 2, y: petFrame.midY - side / 2)
         }
         panel.setFrame(CGRect(origin: origin, size: size), display: true)
     }
@@ -1631,13 +1648,13 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
     private func progressOverlaySize(for petFrame: CGRect) -> CGSize {
         CGSize(
             width: max(132.0, ringOverlaySide(for: petFrame), barWidthPreset.width + 72.0, usageToastWidth + 8.0),
-            height: petFrame.height + 56.0 + ringOverlayPadding
+            height: petFrame.height + usageBarBottomPadding + usageBarTopPadding
         )
     }
 
     private func ringOverlaySize(for petFrame: CGRect) -> CGSize {
         let side = ringOverlaySide(for: petFrame)
-        return CGSize(width: max(side, usageToastWidth + 8.0), height: side)
+        return CGSize(width: max(side, usageToastWidth + 8.0), height: side + usageRingTopPadding)
     }
 
     private var ringOverlayPadding: CGFloat {
@@ -1863,10 +1880,10 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
 
     private func showUsageToast(_ turns: [UsageTurnSummary]) {
         usageToastTimer?.invalidate()
-        let updatedTurns = latestToastTurnsByThread(turns)
+        let updatedTurns = latestToastTurnsByThread(turns).sorted { $0.observedAt < $1.observedAt }
         let updatedThreadIDs = Set(updatedTurns.map(\.threadID))
         let existingTurns = ringView.usageToastTurns.filter { !updatedThreadIDs.contains($0.threadID) }
-        ringView.usageToastTurns = Array((updatedTurns + existingTurns).prefix(3))
+        ringView.usageToastTurns = Array((existingTurns + updatedTurns).suffix(3))
         if ringsVisible, currentPetFrameAppKit != nil {
             panel.orderFrontRegardless()
         }

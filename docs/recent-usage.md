@@ -8,6 +8,20 @@ The overlay already shows remaining Codex limit percentages from local `codex.ra
 
 The menu is informational. It is not a billing calculator.
 
+## What Track Turn Usage Controls
+
+`Track Turn Usage` enables this whole recent-turn feature. It is off by default so the app only reads the local rate-limit event needed for the overlay rings or bars.
+
+When `Track Turn Usage` is on, the app additionally:
+
+- Polls recent response `usage` rows from the local Codex SQLite log.
+- Groups usage rows by `thread_id + turn_id`, or by local submission id if `turn_id` is missing.
+- Sums multiple response usage events inside the same group and shows the count as `2c`, `3c`, and so on.
+- Shows the grouped values in the menu and, briefly, in an overlay toast.
+- Computes `Limit delta` from consecutive local `codex.rate_limits` events.
+
+When `Track Turn Usage` is off, the app stops polling and parsing local response-usage rows, hides the recent-turn and limit-delta menu items, and clears any visible turn-usage toast.
+
 ## Data Source
 
 The app reads only local SQLite logs:
@@ -56,11 +70,11 @@ Limit delta  Short -0.4% | Weekly -0.1%
 
 The recent turn rows intentionally match the overlay toast shape so the same information remains available after the toast disappears.
 
-The `Track Turn Usage` menu item controls this whole section and defaults to off on a fresh install. When it is off, the app stops polling and parsing local response-usage rows, hides the recent-turn and limit-delta menu items, and clears any visible turn-usage toast.
+The `Track Turn Usage` menu item controls this whole section. Turning it off hides these rows and stops the extra local usage-log polling.
 
 ## Overlay Toast
 
-The app also polls recent usage from local logs every few seconds. When it sees a new or changed turn group, it shows or updates a short stacked toast card near the current bars or rings:
+The app also polls recent usage from local logs every few seconds. When it sees a new or changed turn group, it shows or updates a short stacked toast card near the current bars or rings. Multiple cards stack upward: older visible cards stay lower, and newer cards appear above them.
 
 ```text
 W0/a327 2c  N4.0k

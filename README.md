@@ -28,6 +28,22 @@ When the Codex pet is closed, the overlay disappears. When the pet comes back, i
 
 Because the usage overlay is drawn in a separate transparent window, it does not need pet-specific sprites, masks, metadata, or configuration. Change pets in Codex and the overlay follows the new one automatically.
 
+## Track Turn Usage
+
+`Track Turn Usage` is an optional local estimate for recent Codex turns. It is off by default. When enabled, the app reads response `usage` counters from the local Codex SQLite log and groups them by `thread_id + turn_id`.
+
+The menu and toast show:
+
+- `N`: estimated net tokens, calculated as `max(0, In - Cached) + Out`.
+- `I`: input tokens reported by the response usage object.
+- `Ca`: cached input tokens reported by the response usage object.
+- `O`: output tokens reported by the response usage object.
+- `2c`, `3c`, and similar counts: multiple response usage events observed inside the same grouped turn.
+
+These values are useful for understanding recent local activity, but they are not a billing calculator or the official rate-limit formula. `Limit delta` is separate: it compares consecutive local `codex.rate_limits` events and can include other active Codex windows.
+
+See `docs/recent-usage.md` for the full semantics and known limits.
+
 ## Why It Works This Way
 
 The important design choice is the companion boundary. A menu item inside Codex itself would mean patching Electron app files and redoing that patch after app updates. That is brittle and hard to open source.
@@ -111,6 +127,7 @@ skills/codex-pet-limit-rings/
 
 docs/
   limit-rings.md                   implementation contract and data flow
+  recent-usage.md                  Track Turn Usage semantics and caveats
 
 experiments/weather-pets/
   earlier weather-pet renderer     kept as a separate experiment
