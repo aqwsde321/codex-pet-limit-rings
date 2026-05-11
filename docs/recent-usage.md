@@ -17,7 +17,7 @@ When `Track Turn Usage` is on, the app additionally:
 - Polls recent response `usage` rows from the local Codex SQLite log.
 - Groups usage rows by `thread_id + turn_id`, or by local submission id if `turn_id` is missing.
 - Sums multiple response usage events inside the same group and shows the count as `2c`, `3c`, and so on.
-- Shows the grouped values in the menu and, briefly, in an overlay toast.
+- Shows the grouped values in the menu and, briefly, shows the latest changed group in an overlay toast.
 - Computes `Limit delta` from consecutive local `codex.rate_limits` events.
 
 When `Track Turn Usage` is off, the app stops polling and parsing local response-usage rows, hides the recent-turn and limit-delta menu items, and clears any visible turn-usage toast.
@@ -74,7 +74,7 @@ The `Track Turn Usage` menu item controls this whole section. Turning it off hid
 
 ## Overlay Toast
 
-The app also polls recent usage from local logs every few seconds. When it sees a new or changed turn group, it shows or updates a short stacked toast card near the current bars or rings. Multiple cards stack upward: older visible cards stay lower, and newer cards appear above them.
+The app also polls recent usage from local logs every few seconds. When it sees changed turn groups, it shows up to three short toast cards for the groups changed in that polling pass near the current bars or rings:
 
 ```text
 W0/a327 2c  N4.0k
@@ -84,7 +84,7 @@ W1/8089 1c  N7.9k
 I7.8k  Ca0  O126
 ```
 
-The toasts are intentionally temporary. `W0` through `W9` are reusable local window slots assigned by `thread_id`; the suffix after `/` is the shortened thread id for debugging. Each card is the latest changed turn for one window. A newer turn in the same window replaces that window's previous toast card, so multiple cards with the same `W0/a327` label should not stack. Old groups are ignored for toast purposes even if they remain in the menu. `2c` means two response usage calls were observed for that card's turn group. The menu remains the detailed view; the toasts are only glanceable notifications.
+The toasts are intentionally temporary. `W0` through `W9` are reusable local window slots assigned by `thread_id`; the suffix after `/` is the shortened thread id for debugging. Toast cards represent groups changed in the latest polling pass; older visible cards are not carried forward into the next toast update. The menu remains the detailed view for up to three recent groups. Old groups are ignored for toast purposes even if they remain in the menu. `2c` means two response usage calls were observed for that card's turn group.
 
 ## Token Fields
 

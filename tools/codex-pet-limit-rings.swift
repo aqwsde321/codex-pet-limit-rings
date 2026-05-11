@@ -1881,9 +1881,10 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
     private func showUsageToast(_ turns: [UsageTurnSummary]) {
         usageToastTimer?.invalidate()
         let updatedTurns = latestToastTurnsByThread(turns).sorted { $0.observedAt < $1.observedAt }
-        let updatedThreadIDs = Set(updatedTurns.map(\.threadID))
-        let existingTurns = ringView.usageToastTurns.filter { !updatedThreadIDs.contains($0.threadID) }
-        ringView.usageToastTurns = Array((existingTurns + updatedTurns).suffix(3))
+        guard !updatedTurns.isEmpty else {
+            return
+        }
+        ringView.usageToastTurns = Array(updatedTurns.suffix(3))
         if ringsVisible, currentPetFrameAppKit != nil {
             panel.orderFrontRegardless()
         }
