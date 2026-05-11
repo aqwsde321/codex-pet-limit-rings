@@ -1847,6 +1847,8 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
         }
 
         let signatures = Dictionary(uniqueKeysWithValues: turns.map { (usageToastKey(for: $0), usageToastSignature(for: $0)) })
+        let currentKeys = Set(signatures.keys)
+        lastUsageToastSignatures = lastUsageToastSignatures.filter { currentKeys.contains($0.key) }
         if !hasPrimedUsageToast {
             hasPrimedUsageToast = true
             lastUsageToastSignatures = signatures
@@ -1855,14 +1857,18 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
         let now = Date()
         let changedTurns = turns.filter { turn in
             let key = usageToastKey(for: turn)
-            return now.timeIntervalSince(turn.observedAt) <= usageToastMaxAge
+            let age = now.timeIntervalSince(turn.observedAt)
+            return age <= usageToastMaxAge
                 && lastUsageToastSignatures[key] != signatures[key]
         }
         guard !changedTurns.isEmpty else {
             return
         }
 
-        lastUsageToastSignatures = signatures
+        for turn in changedTurns {
+            let key = usageToastKey(for: turn)
+            lastUsageToastSignatures[key] = signatures[key]
+        }
         showUsageToast(changedTurns)
     }
 
