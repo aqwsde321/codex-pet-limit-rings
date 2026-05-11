@@ -30,7 +30,19 @@ Because the usage overlay is drawn in a separate transparent window, it does not
 
 ## Track Turn Usage
 
-`Track Turn Usage` is an optional local estimate for recent Codex turns. It is off by default. When enabled, the app reads response `usage` counters from the local Codex SQLite log and groups them by `thread_id + turn_id`.
+`Track Turn Usage` is an optional local estimate for recent Codex turns. It is off by default. When enabled, the app reads response `usage` counters grouped by `thread_id + turn_id`.
+
+By default, it can fall back to recent rows in the local Codex SQLite log. For cleaner end-of-turn updates, install the optional Codex `Stop` hook:
+
+```bash
+tools/install-turn-usage-hook.sh
+```
+
+The hook runs when Codex stops a turn, sums that turn's local `response.completed` usage rows, and writes compact counters to `~/.codex/codex-pet-limit-rings/turn-usage.json`. The menu-bar app reads that small state file and recent SQLite rows, merges them by `thread_id + turn_id`, and keeps the more complete duplicate when both sources contain the same turn.
+
+The hook is optional because it has more setup than the fallback reader. It modifies Codex hook config, requires Codex to trust the hook command, and needs Codex sessions to be restarted after install or uninstall. The tradeoff is better finalized records: hook records arrive after Codex finishes a turn, while fallback rows can still appear from periodic log polling.
+
+Use the fallback reader when you want the simplest setup. Use the hook when you want cleaner per-turn accounting and are comfortable with the extra local Codex hook configuration.
 
 The menu and toast show:
 
@@ -76,6 +88,12 @@ Uninstall everything the installer adds:
 tools/uninstall-limit-rings.sh
 ```
 
+Remove only the optional turn-usage hook:
+
+```bash
+tools/uninstall-turn-usage-hook.sh
+```
+
 ## Give This Repo To Codex
 
 This repository is structured so a Codex agent can pick it up from a GitHub link.
@@ -105,6 +123,8 @@ The app reads only local Codex files:
 
 - `~/.codex/.codex-global-state.json` tells it whether the pet is open and where it is.
 - `~/.codex/logs_2.sqlite` provides the latest local websocket `codex.rate_limits` event and recent response `usage` token counters.
+- `~/.codex/codex-pet-limit-rings/turn-usage.json` is optionally written by the Codex `Stop` hook and contains session/thread/turn ids, timestamps, call counts, and token counters.
+- `~/.codex/codex-pet-limit-rings/turn-usage-hook.log` is an optional bounded diagnostic log for the hook and contains hook status, timestamps, session/turn ids, and call counts.
 
 It does not require an OpenAI API key, does not read `~/.codex/auth.json`, and does not call a remote usage endpoint. It does not send pet images, screenshots, prompts, or repo contents anywhere.
 
@@ -116,8 +136,11 @@ Set `CODEX_PET_LIMIT_RINGS_NO_MOUSE_MONITOR=1` when running `tools/run-limit-rin
 ```text
 tools/
   codex-pet-limit-rings.swift      native macOS companion app
+  codex-turn-usage-stop-hook.py    optional Codex Stop hook writer
   install-limit-rings.sh           build, install, and start at login
   uninstall-limit-rings.sh         remove the app and login item
+  install-turn-usage-hook.sh       opt in to Stop-hook turn usage
+  uninstall-turn-usage-hook.sh     remove the optional Stop hook
   run-limit-rings.sh               development launch
   build-limit-rings.sh             app bundle builder
   install-codex-skill.sh           copy the bundled skill into ~/.codex/skills

@@ -34,6 +34,8 @@ The app reads local Codex files only:
 - `~/.codex/.codex-global-state.json`: current pet bounds, using `electron-avatar-overlay-bounds.mascot`.
 - `electron-avatar-overlay-open` in the same state file: whether the Codex pet is currently open.
 - `~/.codex/logs_2.sqlite`: usage source using the newest websocket `codex.rate_limits` event and recent response `usage` token counters from `target = 'codex_api::endpoint::responses_websocket'`.
+- `~/.codex/codex-pet-limit-rings/turn-usage.json`: optional finalized turn-usage records written by the opt-in `Stop` hook, containing ids, timestamps, call counts, and token counters.
+- `~/.codex/codex-pet-limit-rings/turn-usage-hook.log`: optional bounded hook diagnostic log with hook status, timestamps, ids, and call counts.
 
 The app watches `~/.codex/.codex-global-state.json` with a macOS file event source, so pet open/close and position writes trigger an immediate frame update. A slow frame timer remains as a fallback in case the file is replaced or an event is missed.
 
@@ -49,7 +51,8 @@ Use `--no-mouse-monitor` to disable global mouse event monitoring; this disables
 - Bar outlines stay visible, and a short moving gradient sweep appears on each bar after local usage-log checks, which normally run every 20 seconds.
 - Ring style uses the same color model and is drawn around the pet with fixed lower translucent readouts.
 - When `Track Turn Usage` is enabled, menu token details are grouped by recent `thread_id + turn_id` groups, with reusable `W0` through `W9` labels assigned per `thread_id`.
-- When `Track Turn Usage` is enabled, the usage toast is polled from local logs and shows the latest net, input, cached, and output token counters for a few seconds.
+- When the optional `Stop` hook is installed, turn-usage rows are merged from the hook-written state file and recent local response `usage` rows in SQLite; duplicate turns keep the record with more observed calls or token counters.
+- When `Track Turn Usage` is enabled, the usage toast shows the latest net, input, cached, and output token counters for a few seconds.
 - The overlay is drawn with no panel background, so only the bars/rings and text are visible.
 - Menu-driven display style, bar position offsets, and bar-width presets are saved in `UserDefaults`.
 
@@ -79,6 +82,28 @@ The LaunchAgent starts the app at login. The installer also removes the earlier 
 `tools/uninstall-limit-rings.sh` unloads the LaunchAgent, removes the app bundle, clears saved overlay visibility and layout preferences, and also cleans up those earlier prototype names.
 
 The build, install, and uninstall scripts refuse destructive app-bundle operations outside the repository `tmp/` app path or the default `~/Applications/CodexPetLimitRings.app` and `~/Applications/CodexLimitAura.app` paths.
+
+Turn usage can optionally use a Codex `Stop` hook. This is separate from the app installer because it modifies Codex hook config:
+
+```bash
+tools/install-turn-usage-hook.sh
+```
+
+The hook installer copies the hook script into:
+
+```text
+~/.codex/codex-pet-limit-rings/hooks/codex-turn-usage-stop-hook.py
+```
+
+and registers an inline `[[hooks.Stop]]` entry in `~/.codex/config.toml`. It also enables `codex_hooks` in the same file. Restart Codex sessions after installing or uninstalling the hook so Codex reloads hook configuration.
+
+This hook path has more setup than the default SQLite fallback: Codex must trust the local hook command, and existing sessions must restart before it runs. It is still optional. Use it when you want finalized turn-usage records from Codex's `Stop` event; the app still keeps the periodic recent-log polling fallback and merges both sources.
+
+To remove only the turn-usage hook:
+
+```bash
+tools/uninstall-turn-usage-hook.sh
+```
 
 ## Development
 

@@ -14,17 +14,34 @@ The menu is informational. It is not a billing calculator.
 
 When `Track Turn Usage` is on, the app additionally:
 
-- Polls recent response `usage` rows from the local Codex SQLite log.
+- Reads finalized turn-usage records from the optional `Stop` hook state file when present.
+- Also reads recent response `usage` rows from the local Codex SQLite log and merges both sources by `thread_id + turn_id`.
 - Groups usage rows by `thread_id + turn_id`, or by local submission id if `turn_id` is missing.
 - Sums multiple response usage events inside the same group and shows the count as `2c`, `3c`, and so on.
 - Shows the grouped values in the menu and, briefly, shows the latest changed group in an overlay toast.
 - Computes `Limit delta` from consecutive local `codex.rate_limits` events.
 
-When `Track Turn Usage` is off, the app stops polling and parsing local response-usage rows, hides the recent-turn and limit-delta menu items, and clears any visible turn-usage toast.
+When `Track Turn Usage` is off, the app stops polling and parsing local turn-usage state, hides the recent-turn and limit-delta menu items, and clears any visible turn-usage toast.
 
 ## Data Source
 
-The app reads only local SQLite logs:
+The app reads only local files. If the optional `Stop` hook is installed, the preferred recent-turn source is:
+
+```text
+~/.codex/codex-pet-limit-rings/turn-usage.json
+```
+
+That file contains full local session/thread/turn ids, observed/update timestamps, per-turn call counts, per-call timestamps, and token counters. It does not store prompt text, screenshots, repository contents, tool output, or auth data.
+
+The hook also writes a bounded local diagnostic log:
+
+```text
+~/.codex/codex-pet-limit-rings/turn-usage-hook.log
+```
+
+The diagnostic log contains hook status, timestamps, full local session and turn ids, and call counts. It is rotated at a small size and removed by `tools/uninstall-turn-usage-hook.sh`.
+
+The app also reads local SQLite logs:
 
 ```text
 ~/.codex/logs_2.sqlite
@@ -54,6 +71,55 @@ The app does not read:
 
 It does not send prompts, screenshots, repository contents, token counters, or local log data anywhere.
 
+## Optional Stop Hook
+
+The repository includes an opt-in Codex `Stop` hook:
+
+```bash
+tools/install-turn-usage-hook.sh
+```
+
+The installer copies the hook script to:
+
+```text
+~/.codex/codex-pet-limit-rings/hooks/codex-turn-usage-stop-hook.py
+```
+
+and registers an inline `[[hooks.Stop]]` entry in `~/.codex/config.toml`. It also enables `codex_hooks` in the same file. Older installer versions used `~/.codex/hooks.json`; the current installer removes this package's legacy `hooks.json` entry to avoid duplicate runs.
+
+When Codex ends a turn, the hook receives the Codex hook payload on stdin. It uses `turn_id` plus available local session/thread identifiers to find matching local `response.completed` usage rows in `logs_2.sqlite`, sums the calls for that turn, and writes the compact result to `turn-usage.json`.
+
+This adds finalized hook records to the recent-turn behavior: Codex tells the hook when a turn stops, the hook writes a compact result, and the app reads that state file. The app still polls recent SQLite rows too, then merges both sources, so fallback rows can appear before a matching hook record is written.
+
+To remove the hook:
+
+```bash
+tools/uninstall-turn-usage-hook.sh
+```
+
+Restart Codex sessions after installing or uninstalling hooks so Codex reloads hook configuration.
+
+### Setup Cost
+
+The hook is intentionally opt-in because it changes local Codex configuration outside this app:
+
+1. Copies the hook script into `~/.codex/codex-pet-limit-rings/hooks/`.
+2. Adds an inline `[[hooks.Stop]]` entry to `~/.codex/config.toml`.
+3. Enables `codex_hooks` in `~/.codex/config.toml`.
+4. Requires Codex to trust the hook command.
+5. Requires existing Codex sessions to be restarted before the new hook config is active.
+
+The app itself still works without this setup. Without the hook state file, `Track Turn Usage` shows recent local `response.completed` usage rows from SQLite. With both sources present, the app merges hook records and SQLite rows by `thread_id + turn_id` and keeps the duplicate with more observed calls or token counters.
+
+### Hook vs SQLite Fallback
+
+| Mode | Setup | Timing | Accuracy shape | Best for |
+| --- | --- | --- | --- | --- |
+| SQLite fallback | No Codex hook config | Periodic polling | Good recent-log estimate, but the app infers changes from polling | Zero-config local use |
+| `Stop` hook | Install hook, trust command, restart sessions | Hook records after Codex stops a turn; fallback rows still poll | Cleaner `thread_id + turn_id` finalized records, with `c` equal to observed `response.completed` calls | Per-turn toast/menu behavior |
+
+The hook is better for the current toast goal because Codex explicitly tells the hook when a turn stops. The fallback remains active as a zero-config source and can surface rows from periodic polling before the hook record is available.
+
 ## Menu Shape
 
 The menu shows up to three recent turn groups:
@@ -72,17 +138,17 @@ The `Track Turn Usage` menu item controls this whole section. Turning it off hid
 
 ## Overlay Toast
 
-The app also polls recent usage from local logs every few seconds. When it sees changed turn groups, it shows up to three short toast cards for the groups changed in that polling pass near the current bars or rings:
+The app polls recent usage state every few seconds. With the optional `Stop` hook installed, changed groups usually appear after Codex finishes a turn. Without the hook, changed groups come from recent local response `usage` rows. When the app sees changed turn groups, it shows up to three short toast cards for the groups changed in that polling pass near the current bars or rings:
 
 ```text
-W0/a327 2c  N4.0k
+W0/81d2 2c  N4.0k
 I258k  Ca254k  O298
 
-W1/8089 1c  N7.9k
+W1/c1f4 1c  N7.9k
 I7.8k  Ca0  O126
 ```
 
-The toasts are intentionally temporary. `W0` through `W9` are reusable local window slots assigned by `thread_id`; the suffix after `/` is the shortened thread id for debugging. Toast cards represent groups changed in the latest polling pass; older visible cards are not carried forward into the next toast update. The menu remains the detailed view for up to three recent groups. Old groups are ignored for toast purposes even if they remain in the menu. `2c` means two response usage calls were observed for that card's turn group.
+The toasts are intentionally temporary. `W0` through `W9` are reusable local window slots assigned by `thread_id`; the suffix after `/` is the shortened turn id for debugging. Toast cards represent groups changed in the latest polling pass; older visible cards are not carried forward into the next toast update. The menu remains the detailed view for up to three recent groups. Old groups are ignored for toast purposes even if they remain in the menu. `2c` means two response usage calls were observed for that card's turn group.
 
 ## Token Fields
 
@@ -140,9 +206,10 @@ This is an account-level change. It is not attributed to a specific thread. If s
 
 - `Net` is a useful estimate, not an official usage formula.
 - Cached token treatment can differ from the way a plan's limit is decremented.
-- A single user-visible question can trigger multiple model calls.
+- A single user-visible question can trigger multiple model calls; the hook reports these as multiple calls inside the same `thread_id + turn_id` when Codex logs them that way.
 - The app can aggregate multiple usage events inside a `turn_id`, but it does not inspect prompt text to infer semantic question boundaries.
 - `Limit delta` is account-level and can be ambiguous during simultaneous work.
+- Codex hooks are loaded by Codex sessions, so installing or uninstalling the hook requires restarting Codex sessions before behavior changes are visible.
 
 The safest interpretation is:
 

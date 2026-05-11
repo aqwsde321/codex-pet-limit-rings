@@ -82,6 +82,7 @@ private let stateCheckPulseDuration: TimeInterval = 0.85
 private let usageToastPollInterval: TimeInterval = 2.0
 private let usageToastDuration: TimeInterval = 8.0
 private let usageToastMaxAge: TimeInterval = 60.0
+private let hookUsageStateMaxAge: TimeInterval = 24.0 * 60.0 * 60.0
 private let usageToastWidth: CGFloat = 192.0
 private let usageMenuRowWidth: CGFloat = 440.0
 private let usageMenuRowHeight: CGFloat = 24.0
@@ -190,10 +191,33 @@ private struct InputTokenDetailsPayload: Decodable {
     var cached_tokens: Int64?
 }
 
+private struct HookUsageStatePayload: Decodable {
+    var records: [HookUsageRecordPayload]?
+}
+
+private struct HookUsageRecordPayload: Decodable {
+    var thread_id: String?
+    var session_id: String?
+    var turn_id: String?
+    var observed_at: Double?
+    var input_tokens: Int64?
+    var cached_tokens: Int64?
+    var output_tokens: Int64?
+    var calls: [HookUsageCallPayload]?
+}
+
+private struct HookUsageCallPayload: Decodable {
+    var observed_at: Double?
+    var input_tokens: Int64?
+    var cached_tokens: Int64?
+    var output_tokens: Int64?
+}
+
 struct LimitRingsConfig {
     var codexHome: URL
     var globalStatePath: URL
     var logsPath: URL
+    var turnUsageStatePath: URL
     var previewPath: URL?
     var fallbackSize: CGFloat = 220
     var mouseMonitorEnabled: Bool = true
@@ -201,6 +225,7 @@ struct LimitRingsConfig {
 
 final class LimitStateReader {
     private let logsPath: URL
+    private let turnUsageStatePath: URL
 
     private struct UsageSample {
         var threadID: String
@@ -254,8 +279,9 @@ final class LimitStateReader {
         }
     }
 
-    init(logsPath: URL) {
+    init(logsPath: URL, turnUsageStatePath: URL) {
         self.logsPath = logsPath
+        self.turnUsageStatePath = turnUsageStatePath
     }
 
     func readLatest() -> LimitState {
@@ -263,21 +289,20 @@ final class LimitStateReader {
     }
 
     func readUsageDetails() -> UsageDetails {
+        let hookTurns = readHookUsageTurns()
         guard FileManager.default.fileExists(atPath: logsPath.path) else {
-            return .empty
+            return hookTurns.isEmpty ? .empty : UsageDetails(recentTurns: hookTurns, limitDelta: nil)
         }
 
         var db: OpaquePointer?
         let openResult = sqlite3_open_v2(logsPath.path, &db, SQLITE_OPEN_READONLY | SQLITE_OPEN_NOMUTEX, nil)
         guard openResult == SQLITE_OK, let db else {
-            return .empty
+            return hookTurns.isEmpty ? .empty : UsageDetails(recentTurns: hookTurns, limitDelta: nil)
         }
         defer { sqlite3_close(db) }
 
-        return UsageDetails(
-            recentTurns: readRecentTurns(db: db),
-            limitDelta: readLimitDelta(db: db)
-        )
+        let limitDelta = readLimitDelta(db: db)
+        return UsageDetails(recentTurns: mergeRecentTurns(hookTurns: hookTurns, sqliteTurns: readRecentTurns(db: db)), limitDelta: limitDelta)
     }
 
     private func readLatestLog() -> LimitState {
@@ -387,6 +412,106 @@ final class LimitStateReader {
             threadID,
             turnID ?? String(observedAt.timeIntervalSince1970)
         ].joined(separator: "|")
+    }
+
+    private func mergeRecentTurns(hookTurns: [UsageTurnSummary], sqliteTurns: [UsageTurnSummary]) -> [UsageTurnSummary] {
+        var turnsByKey: [String: UsageTurnSummary] = [:]
+        for turn in sqliteTurns {
+            turnsByKey[usageGroupKey(threadID: turn.threadID, turnID: turn.turnID, observedAt: turn.observedAt)] = turn
+        }
+        for turn in hookTurns {
+            let key = usageGroupKey(threadID: turn.threadID, turnID: turn.turnID, observedAt: turn.observedAt)
+            if let existing = turnsByKey[key] {
+                turnsByKey[key] = preferredTurn(existing: existing, candidate: turn)
+            } else {
+                turnsByKey[key] = turn
+            }
+        }
+        return Array(turnsByKey.values.sorted { $0.observedAt > $1.observedAt }.prefix(3))
+    }
+
+    private func preferredTurn(existing: UsageTurnSummary, candidate: UsageTurnSummary) -> UsageTurnSummary {
+        if candidate.calls.count != existing.calls.count {
+            return candidate.calls.count > existing.calls.count ? candidate : existing
+        }
+
+        let existingTokens = existing.inputTokens + existing.cachedTokens + existing.outputTokens
+        let candidateTokens = candidate.inputTokens + candidate.cachedTokens + candidate.outputTokens
+        return candidateTokens >= existingTokens ? candidate : existing
+    }
+
+    private func readHookUsageTurns() -> [UsageTurnSummary] {
+        guard FileManager.default.fileExists(atPath: turnUsageStatePath.path),
+              let data = try? Data(contentsOf: turnUsageStatePath),
+              let state = try? JSONDecoder().decode(HookUsageStatePayload.self, from: data),
+              let records = state.records else {
+            return []
+        }
+
+        var seenKeys = Set<String>()
+        var turns: [UsageTurnSummary] = []
+        for record in records.sorted(by: { ($0.observed_at ?? 0) > ($1.observed_at ?? 0) }) {
+            let threadID = record.thread_id ?? record.session_id
+            guard let threadID, !threadID.isEmpty else {
+                continue
+            }
+
+            let observedAt = Date(timeIntervalSince1970: record.observed_at ?? Date().timeIntervalSince1970)
+            guard Date().timeIntervalSince(observedAt) <= hookUsageStateMaxAge else {
+                continue
+            }
+            let key = usageGroupKey(threadID: threadID, turnID: record.turn_id, observedAt: observedAt)
+            guard !seenKeys.contains(key) else {
+                continue
+            }
+            seenKeys.insert(key)
+
+            let calls = hookCalls(from: record, observedAt: observedAt)
+            let inputTokens = record.input_tokens ?? calls.reduce(Int64(0)) { $0 + $1.inputTokens }
+            let cachedTokens = record.cached_tokens ?? calls.reduce(Int64(0)) { $0 + $1.cachedTokens }
+            let outputTokens = record.output_tokens ?? calls.reduce(Int64(0)) { $0 + $1.outputTokens }
+            turns.append(UsageTurnSummary(
+                threadID: threadID,
+                turnID: record.turn_id,
+                windowLabel: nil,
+                observedAt: observedAt,
+                inputTokens: inputTokens,
+                cachedTokens: cachedTokens,
+                outputTokens: outputTokens,
+                calls: calls
+            ))
+
+            if turns.count >= 3 {
+                break
+            }
+        }
+        return turns
+    }
+
+    private func hookCalls(from record: HookUsageRecordPayload, observedAt: Date) -> [UsageCallSummary] {
+        let calls = record.calls?.compactMap { call -> UsageCallSummary? in
+            guard let inputTokens = call.input_tokens,
+                  let outputTokens = call.output_tokens else {
+                return nil
+            }
+            return UsageCallSummary(
+                observedAt: Date(timeIntervalSince1970: call.observed_at ?? observedAt.timeIntervalSince1970),
+                inputTokens: inputTokens,
+                cachedTokens: call.cached_tokens ?? 0,
+                outputTokens: outputTokens
+            )
+        } ?? []
+
+        if !calls.isEmpty {
+            return calls.sorted { $0.observedAt < $1.observedAt }
+        }
+
+        return [UsageCallSummary(
+            observedAt: observedAt,
+            inputTokens: record.input_tokens ?? 0,
+            cachedTokens: record.cached_tokens ?? 0,
+            outputTokens: record.output_tokens ?? 0
+        )]
     }
 
     private func readLimitDelta(db: OpaquePointer) -> LimitDelta? {
@@ -1095,12 +1220,13 @@ struct LimitRingRenderer {
     }
 
     private func shortUsageID(for turn: UsageTurnSummary) -> String {
-        let thread = compactID(turn.threadID)
-        if let windowLabel = turn.windowLabel, !windowLabel.isEmpty {
-            return "\(windowLabel)/\(thread)"
+        guard let turnID = turn.turnID, !turnID.isEmpty else {
+            return turn.windowLabel ?? compactID(turn.threadID)
         }
-        guard let turnID = turn.turnID, !turnID.isEmpty else { return thread }
-        return "\(thread)/\(compactID(turnID))"
+        if let windowLabel = turn.windowLabel, !windowLabel.isEmpty {
+            return "\(windowLabel)/\(compactID(turnID))"
+        }
+        return "\(compactID(turn.threadID))/\(compactID(turnID))"
     }
 
     private func compactID(_ id: String) -> String {
@@ -1360,7 +1486,7 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
 
     init(config: LimitRingsConfig) {
         self.config = config
-        self.stateReader = LimitStateReader(logsPath: config.logsPath)
+        self.stateReader = LimitStateReader(logsPath: config.logsPath, turnUsageStatePath: config.turnUsageStatePath)
         self.frameReader = PetFrameReader(globalStatePath: config.globalStatePath)
         self.ringView = LimitRingView(frame: CGRect(origin: .zero, size: CGSize(width: config.fallbackSize, height: config.fallbackSize)))
         self.ringsVisible = UserDefaults.standard.object(forKey: ringsVisibleDefaultsKey) as? Bool ?? true
@@ -2633,7 +2759,7 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
 }
 
 func renderPreview(config: LimitRingsConfig) -> Bool {
-    let state = LimitStateReader(logsPath: config.logsPath).readLatest()
+    let state = LimitStateReader(logsPath: config.logsPath, turnUsageStatePath: config.turnUsageStatePath).readLatest()
     let size = CGSize(width: config.fallbackSize, height: config.fallbackSize)
     let image = NSImage(size: size)
     image.lockFocus()
@@ -2666,6 +2792,7 @@ func parseConfig() -> LimitRingsConfig? {
         codexHome: codexHome,
         globalStatePath: codexHome.appendingPathComponent(".codex-global-state.json"),
         logsPath: defaultLogsPath(codexHome: codexHome),
+        turnUsageStatePath: defaultTurnUsageStatePath(codexHome: codexHome),
         previewPath: nil
     )
 
@@ -2675,7 +2802,7 @@ func parseConfig() -> LimitRingsConfig? {
         switch arg {
         case "--help", "-h":
             print("""
-            Usage: codex-pet-limit-rings [--preview PATH] [--codex-home PATH] [--logs PATH] [--state PATH] [--no-mouse-monitor]
+            Usage: codex-pet-limit-rings [--preview PATH] [--codex-home PATH] [--logs PATH] [--turn-usage-state PATH] [--state PATH] [--no-mouse-monitor]
 
             Draws a transparent Codex rate-limit overlay near the current pet using local Codex logs.
             """)
@@ -2691,10 +2818,15 @@ func parseConfig() -> LimitRingsConfig? {
             config.codexHome = url
             config.globalStatePath = url.appendingPathComponent(".codex-global-state.json")
             config.logsPath = defaultLogsPath(codexHome: url)
+            config.turnUsageStatePath = defaultTurnUsageStatePath(codexHome: url)
         case "--logs":
             guard let value = args.first else { return nil }
             args.removeFirst()
             config.logsPath = URL(fileURLWithPath: value)
+        case "--turn-usage-state":
+            guard let value = args.first else { return nil }
+            args.removeFirst()
+            config.turnUsageStatePath = URL(fileURLWithPath: value)
         case "--state":
             guard let value = args.first else { return nil }
             args.removeFirst()
@@ -2720,6 +2852,10 @@ func defaultLogsPath(codexHome: URL) -> URL {
         return logs2
     }
     return codexHome.appendingPathComponent("logs_1.sqlite")
+}
+
+func defaultTurnUsageStatePath(codexHome: URL) -> URL {
+    codexHome.appendingPathComponent("codex-pet-limit-rings/turn-usage.json")
 }
 
 guard let config = parseConfig() else {
