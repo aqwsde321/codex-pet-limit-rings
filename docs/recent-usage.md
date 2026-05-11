@@ -60,15 +60,13 @@ The menu shows up to three recent turn groups:
 
 ```text
 Recent turns
-W0/a327  2c  N 8.5k
-  I 192k  Ca 186k  O 1.6k
-W1/8089  1c  N 7.7k
-  I 7.7k  Ca 0  O 41
+W0/a327/81d2  2c  N8.5k  I192k  Ca186k  O1.6k
+W1/8089/c1f4  1c  N7.7k  I7.7k  Ca0  O41
 
 Limit delta  Short -0.4% | Weekly -0.1%
 ```
 
-The recent turn rows intentionally match the overlay toast shape so the same information remains available after the toast disappears.
+The recent turn rows are compact and color-coded in the menu. They include a short `turn_id` suffix so repeated `W0/a327` rows can still be distinguished.
 
 The `Track Turn Usage` menu item controls this whole section. Turning it off hides these rows and stops the extra local usage-log polling.
 

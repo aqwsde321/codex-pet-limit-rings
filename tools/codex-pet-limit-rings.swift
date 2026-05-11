@@ -83,6 +83,8 @@ private let usageToastPollInterval: TimeInterval = 2.0
 private let usageToastDuration: TimeInterval = 8.0
 private let usageToastMaxAge: TimeInterval = 60.0
 private let usageToastWidth: CGFloat = 192.0
+private let usageMenuRowWidth: CGFloat = 440.0
+private let usageMenuRowHeight: CGFloat = 24.0
 private let usageBarTopPadding: CGFloat = 132.0
 private let usageBarBottomPadding: CGFloat = 56.0
 private let usageRingTopPadding: CGFloat = 132.0
@@ -1318,6 +1320,7 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
     private var turnUsageItem: NSMenuItem?
     private var showRingsItem: NSMenuItem?
     private var displayStyleItems: [NSMenuItem] = []
+    private var barControlsSeparatorItem: NSMenuItem?
     private var positionMenuItem: NSMenuItem?
     private var barWidthMenuItem: NSMenuItem?
     private var positionControl: NSSegmentedControl?
@@ -1702,8 +1705,11 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
 
         menu.addItem(.separator())
         menu.addItem(makeDisplayStyleMenuItem())
-        menu.addItem(makePositionMenuItem())
+        let barControlsSeparator = NSMenuItem.separator()
+        menu.addItem(barControlsSeparator)
+        barControlsSeparatorItem = barControlsSeparator
         menu.addItem(makeBarWidthMenuItem())
+        menu.addItem(makePositionMenuItem())
         menu.addItem(.separator())
 
         let quitItem = NSMenuItem(title: "Quit Codex Pet Limit Rings", action: #selector(quit(_:)), keyEquivalent: "q")
@@ -1911,14 +1917,13 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
     }
 
     private func installUsageDetailsMenuItems(in menu: NSMenu) {
-        let header = NSMenuItem(title: "Recent turns", action: nil, keyEquivalent: "")
-        header.isEnabled = false
+        let header = makeUsageMenuLabelItem(height: usageMenuRowHeight, textInset: 16.0)
+        setUsageMenuItem(header, attributedText: menuHeaderText("Recent turns"), hidden: false)
         menu.addItem(header)
         recentUsageHeaderItem = header
 
-        recentUsageItems = (0..<6).map { _ in
-            let item = NSMenuItem(title: "", action: nil, keyEquivalent: "")
-            item.isEnabled = false
+        recentUsageItems = (0..<3).map { _ in
+            let item = makeUsageMenuLabelItem(height: usageMenuRowHeight, textInset: 16.0)
             menu.addItem(item)
             return item
         }
@@ -1931,6 +1936,27 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
         delta.isEnabled = false
         menu.addItem(delta)
         limitDeltaItem = delta
+    }
+
+    private func makeUsageMenuLabelItem(height: CGFloat, textInset: CGFloat) -> NSMenuItem {
+        let item = NSMenuItem()
+        let view = NSView(frame: NSRect(x: 0, y: 0, width: usageMenuRowWidth, height: height))
+        let label = NSTextField(labelWithString: "")
+        label.frame = NSRect(x: textInset, y: 3.0, width: usageMenuRowWidth - textInset - 12.0, height: height - 5.0)
+        label.lineBreakMode = .byTruncatingTail
+        label.allowsDefaultTighteningForTruncation = true
+        view.addSubview(label)
+        item.view = view
+        return item
+    }
+
+    private func setUsageMenuItem(_ item: NSMenuItem, attributedText: NSAttributedString, hidden: Bool) {
+        if let label = item.view?.subviews.compactMap({ $0 as? NSTextField }).first {
+            label.attributedStringValue = attributedText
+        } else {
+            item.attributedTitle = attributedText
+        }
+        item.isHidden = hidden
     }
 
     private func makeDisplayStyleMenuItem() -> NSMenuItem {
@@ -1950,10 +1976,10 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
     private func makePositionMenuItem() -> NSMenuItem {
         let item = NSMenuItem()
         positionMenuItem = item
-        let view = NSView(frame: NSRect(x: 0, y: 0, width: 166, height: 52))
+        let view = NSView(frame: NSRect(x: 0, y: 0, width: 210, height: 50))
 
         let label = NSTextField(labelWithString: "Position")
-        label.frame = NSRect(x: 12, y: 30, width: 142, height: 16)
+        label.frame = NSRect(x: 32, y: 30, width: 152, height: 15)
         label.font = NSFont.menuFont(ofSize: 12.0)
         label.textColor = .secondaryLabelColor
         view.addSubview(label)
@@ -1965,7 +1991,7 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
             target: self,
             action: #selector(adjustUsageBarsFromSegment(_:))
         )
-        control.frame = NSRect(x: 10, y: 6, width: 146, height: 24)
+        control.frame = NSRect(x: 30, y: 6, width: 146, height: 24)
         control.controlSize = .small
         control.segmentStyle = .rounded
         control.setWidth(28.0, forSegment: UsageBarPositionAction.left.rawValue)
@@ -2026,8 +2052,7 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
         guard turnUsageEnabled else {
             recentUsageHeaderItem?.isHidden = true
             recentUsageItems.forEach {
-                $0.title = ""
-                $0.isHidden = true
+                setUsageMenuItem($0, attributedText: NSAttributedString(string: ""), hidden: true)
             }
             limitDeltaSeparatorItem?.isHidden = true
             limitDeltaItem?.title = ""
@@ -2040,26 +2065,18 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
         let turns = Array(usageDetails.recentTurns.prefix(3))
         if turns.isEmpty {
             for (index, item) in recentUsageItems.enumerated() {
-                item.title = index == 0 ? "Waiting for usage data" : ""
-                item.isHidden = index > 0
+                let text = index == 0 ? menuMutedText("Waiting for usage data") : NSAttributedString(string: "")
+                setUsageMenuItem(item, attributedText: text, hidden: index > 0)
             }
         } else {
             for index in 0..<recentUsageItems.count {
                 let item = recentUsageItems[index]
-                let turnIndex = index / 2
-                guard turnIndex < turns.count else {
-                    item.title = ""
-                    item.isHidden = true
+                guard index < turns.count else {
+                    setUsageMenuItem(item, attributedText: NSAttributedString(string: ""), hidden: true)
                     continue
                 }
 
-                let turn = turns[turnIndex]
-                if index % 2 == 0 {
-                    item.title = "\(menuUsageID(for: turn))  \(turn.callCount)c  N \(formatTokenCount(turn.netTokens))"
-                } else {
-                    item.title = "  " + formatUsageTotalsPreview(turn)
-                }
-                item.isHidden = false
+                setUsageMenuItem(item, attributedText: usageMenuRow(for: turns[index]), hidden: false)
             }
         }
 
@@ -2097,10 +2114,11 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
 
     private func updateLayoutControlAvailability() {
         let usesBars = displayStyle == .bars
+        barControlsSeparatorItem?.isHidden = !usesBars
+        barWidthMenuItem?.isHidden = !usesBars
         positionMenuItem?.isHidden = !usesBars
         positionControl?.isEnabled = usesBars
         positionLabel?.textColor = .secondaryLabelColor
-        barWidthMenuItem?.isHidden = !usesBars
     }
 
     private func updateRingVisibility() {
@@ -2504,10 +2522,16 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
 
     private func menuUsageID(for turn: UsageTurnSummary) -> String {
         let thread = compactThreadID(turn.threadID)
-        guard let windowLabel = turn.windowLabel, !windowLabel.isEmpty else {
-            return thread
+        let prefix: String
+        if let windowLabel = turn.windowLabel, !windowLabel.isEmpty {
+            prefix = "\(windowLabel)/\(thread)"
+        } else {
+            prefix = thread
         }
-        return "\(windowLabel)/\(thread)"
+        guard let turnID = turn.turnID, !turnID.isEmpty else {
+            return prefix
+        }
+        return "\(prefix)/\(compactThreadID(turnID))"
     }
 
     private func compactThreadID(_ threadID: String) -> String {
@@ -2518,8 +2542,68 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
         return String(compact.suffix(4))
     }
 
-    private func formatUsageTotalsPreview(_ turn: UsageTurnSummary) -> String {
-        "I \(formatTokenCount(turn.inputTokens))  Ca \(formatTokenCount(turn.cachedTokens))  O \(formatTokenCount(turn.outputTokens))"
+    private func usageMenuRow(for turn: UsageTurnSummary) -> NSAttributedString {
+        let text = NSMutableAttributedString()
+        text.append(NSAttributedString(string: menuUsageID(for: turn), attributes: menuMonospaceAttributes(color: .secondaryLabelColor, weight: .semibold)))
+        text.append(NSAttributedString(string: "  ", attributes: menuMonospaceAttributes(color: .secondaryLabelColor)))
+        text.append(NSAttributedString(string: "\(turn.callCount)c", attributes: menuMonospaceAttributes(color: menuNetColor(), weight: .semibold)))
+        text.append(NSAttributedString(string: "  ", attributes: menuMonospaceAttributes(color: .secondaryLabelColor)))
+        appendMenuMetric("N", formatTokenCount(turn.netTokens), color: menuNetColor(), to: text)
+        text.append(NSAttributedString(string: "  ", attributes: menuMonospaceAttributes(color: .secondaryLabelColor)))
+        appendMenuMetric("I", formatTokenCount(turn.inputTokens), color: menuInputColor(), to: text)
+        text.append(NSAttributedString(string: "  ", attributes: menuMonospaceAttributes(color: .secondaryLabelColor)))
+        appendMenuMetric("Ca", formatTokenCount(turn.cachedTokens), color: menuCachedColor(), to: text)
+        text.append(NSAttributedString(string: "  ", attributes: menuMonospaceAttributes(color: .secondaryLabelColor)))
+        appendMenuMetric("O", formatTokenCount(turn.outputTokens), color: menuOutputColor(), to: text)
+        return text
+    }
+
+    private func appendMenuMetric(_ label: String, _ value: String, color: NSColor, to text: NSMutableAttributedString) {
+        text.append(NSAttributedString(string: label, attributes: menuMonospaceAttributes(color: .secondaryLabelColor, weight: .medium)))
+        text.append(NSAttributedString(string: value, attributes: menuMonospaceAttributes(color: color, weight: .semibold)))
+    }
+
+    private func menuHeaderText(_ value: String) -> NSAttributedString {
+        NSAttributedString(
+            string: value,
+            attributes: [
+                .font: NSFont.systemFont(ofSize: 12.0, weight: .semibold),
+                .foregroundColor: NSColor.labelColor.withAlphaComponent(0.74)
+            ]
+        )
+    }
+
+    private func menuMutedText(_ value: String) -> NSAttributedString {
+        NSAttributedString(
+            string: value,
+            attributes: [
+                .font: NSFont.menuFont(ofSize: 12.0),
+                .foregroundColor: NSColor.secondaryLabelColor
+            ]
+        )
+    }
+
+    private func menuMonospaceAttributes(color: NSColor, weight: NSFont.Weight = .regular) -> [NSAttributedString.Key: Any] {
+        [
+            .font: NSFont.monospacedSystemFont(ofSize: 11.6, weight: weight),
+            .foregroundColor: color
+        ]
+    }
+
+    private func menuNetColor() -> NSColor {
+        NSColor(calibratedRed: 0.00, green: 0.62, blue: 0.52, alpha: 1.0)
+    }
+
+    private func menuInputColor() -> NSColor {
+        NSColor(calibratedRed: 0.10, green: 0.45, blue: 0.82, alpha: 1.0)
+    }
+
+    private func menuCachedColor() -> NSColor {
+        NSColor.secondaryLabelColor
+    }
+
+    private func menuOutputColor() -> NSColor {
+        NSColor(calibratedRed: 0.84, green: 0.46, blue: 0.00, alpha: 1.0)
     }
 
     private func formatAge(since date: Date) -> String {

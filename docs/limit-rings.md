@@ -11,10 +11,11 @@ The usage overlay is pet-agnostic. It works with any pet Codex displays because 
 - `Show Usage Overlay` toggles the overlay without quitting the app.
 - `Refresh Now` rereads usage and pet-position state.
 - `Display Style` switches between the default rings and compact bars.
+- In bar style, bar-only layout controls appear under `Display Style`; `Bar Width` is shown first, followed by an indented `Position` control.
 - In bar style, `Position` uses an inline menu control so position buttons can be clicked repeatedly without reopening the menu. It moves only the bar readouts; turn-usage toasts stay anchored near the pet like ring-style toasts.
-- In bar style, `Bar Width` switches between short, normal, and wide bars.
+- In bar style, `Bar Width` switches between short, normal, and wide bars. Bar-only controls are hidden in ring style.
 - The menu summary includes how old the local rate-limit log entry is.
-- When `Track Turn Usage` is enabled, the menu shows the latest usage-token counts for up to three recent turn groups.
+- When `Track Turn Usage` is enabled, the menu shows compact color-coded usage-token counts for up to three recent turn groups.
 - When `Track Turn Usage` is enabled, the menu shows the latest short-window and weekly limit delta from consecutive rate-limit events.
 - When `Track Turn Usage` is enabled, a short toast appears near the overlay when a new turn usage total is observed.
 - In bar style, two compact bars below the pet show short-window and weekly remaining capacity.
