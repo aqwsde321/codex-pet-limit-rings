@@ -1611,10 +1611,45 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
             let directory = config.turnUsageSettingsPath.deletingLastPathComponent()
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
+            let lockFD = open(turnUsageLifecycleLockPath.path, O_CREAT | O_RDWR, S_IRUSR | S_IWUSR)
+            if lockFD >= 0 {
+                defer {
+                    flock(lockFD, LOCK_UN)
+                    close(lockFD)
+                }
+                fchmod(lockFD, S_IRUSR | S_IWUSR)
+                flock(lockFD, LOCK_EX)
+            }
             try data.write(to: config.turnUsageSettingsPath, options: .atomic)
             try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: config.turnUsageSettingsPath.path)
+            if !turnUsageEnabled {
+                clearTurnUsageQueueFiles()
+            }
         } catch {
             fputs("codex-pet-limit-rings: failed to write turn usage settings: \(error)\n", stderr)
+        }
+    }
+
+    private var turnUsageLifecycleLockPath: URL {
+        config.turnUsageSettingsPath
+            .deletingLastPathComponent()
+            .appendingPathComponent("turn-usage-lifecycle.lock")
+    }
+
+    private func clearTurnUsageQueueFiles() {
+        let directory = config.turnUsageSettingsPath.deletingLastPathComponent()
+        removeFileIfPresent(directory.appendingPathComponent("turn-usage-queue.jsonl"))
+        removeFileIfPresent(directory.appendingPathComponent("turn-usage-queue.jsonl.tmp"))
+    }
+
+    private func removeFileIfPresent(_ url: URL) {
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            return
+        }
+        do {
+            try FileManager.default.removeItem(at: url)
+        } catch {
+            fputs("codex-pet-limit-rings: failed to remove \(url.path): \(error)\n", stderr)
         }
     }
 

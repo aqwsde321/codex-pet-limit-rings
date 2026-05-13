@@ -34,6 +34,12 @@ The app reads only local files. The app and optional `Stop` hook coordinate thro
 This file stores whether `Track Turn Usage` is enabled. The hook treats a missing or malformed settings file as disabled.
 
 ```text
+~/.codex/codex-pet-limit-rings/turn-usage-queue.jsonl
+```
+
+That file is a bounded local queue used by the optional `Stop` hook. The hook appends only local session/thread/turn ids, enqueue timestamps, and retry counters, then returns immediately. A background worker owns the SQLite read and removes a job only after the compact usage record is written. Jobs are deduplicated by local identity plus `turn_id`, retried briefly while SQLite catches up, and dropped after a short TTL or if the queue exceeds its size limits.
+
+```text
 ~/.codex/codex-pet-limit-rings/turn-usage.json
 ```
 
@@ -93,9 +99,9 @@ The installer copies the hook script to:
 
 and registers an inline `[[hooks.Stop]]` entry in `~/.codex/config.toml`. It also enables `codex_hooks` in the same file. Older installer versions used `~/.codex/hooks.json`; the current installer removes this package's legacy `hooks.json` entry to avoid duplicate runs.
 
-When Codex ends a turn, the hook receives the Codex hook payload on stdin. It uses `turn_id` plus available local session/thread identifiers to find matching local `response.completed` usage rows in `logs_2.sqlite`, sums the calls for that turn, and writes the compact result to `turn-usage.json`.
+When Codex ends a turn, the hook receives the Codex hook payload on stdin. It writes a small local queue job and returns so Codex does not wait on SQLite. A short-lived background worker then uses `turn_id` plus available local session/thread identifiers to find matching local `response.completed` usage rows in `logs_2.sqlite`, sums the calls for that turn, and writes the compact result to `turn-usage.json`.
 
-This adds finalized hook records to the recent-turn behavior: Codex tells the hook when a turn stops, the hook writes a compact result, and the app reads that state file. The app still polls recent SQLite rows too, then merges both sources, so fallback rows can appear before a matching hook record is written.
+This adds finalized hook records to the recent-turn behavior: Codex tells the hook when a turn stops, the worker writes a compact result, and the app reads that state file. The app still polls recent SQLite rows too, then merges both sources, so fallback rows can appear before a matching hook record is written.
 
 The hook is installed independently from the menu toggle. The toggle controls collection by writing `settings.json`; when it is off, the installed hook returns immediately and does not touch SQLite.
 
@@ -124,9 +130,9 @@ The app itself still works without this setup. Without the hook state file, `Tra
 | Mode | Setup | Timing | Accuracy shape | Best for |
 | --- | --- | --- | --- | --- |
 | SQLite fallback | No Codex hook config | Periodic polling | Good recent-log estimate, but the app infers changes from polling | Zero-config local use |
-| `Stop` hook | Install hook, trust command, restart sessions | Hook records after Codex stops a turn; fallback rows still poll | Cleaner `thread_id + turn_id` finalized records, with `c` equal to observed `response.completed` calls | Per-turn toast/menu behavior |
+| `Stop` hook | Install hook, trust command, restart sessions | Hook queues immediately; worker records after Codex stops a turn; fallback rows still poll | Cleaner `thread_id + turn_id` finalized records, with `c` equal to observed `response.completed` calls | Per-turn toast/menu behavior |
 
-The hook is better for the current toast goal because Codex explicitly tells the hook when a turn stops. The fallback remains active as a zero-config source and can surface rows from periodic polling before the hook record is available.
+The hook is better for the current toast goal because Codex explicitly tells the hook when a turn stops. The queue keeps the hook fast while giving the worker a chance to read the final usage rows after SQLite catches up. The fallback remains active as a zero-config source and can surface rows from periodic polling before the hook record is available.
 
 ## Menu Shape
 

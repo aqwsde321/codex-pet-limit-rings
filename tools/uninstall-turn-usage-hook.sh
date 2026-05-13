@@ -3,12 +3,9 @@ set -euo pipefail
 
 CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
 HOOK_SCRIPT="$CODEX_HOME/codex-pet-limit-rings/hooks/codex-turn-usage-stop-hook.py"
-STATE_FILE="$CODEX_HOME/codex-pet-limit-rings/turn-usage.json"
-SETTINGS_FILE="$CODEX_HOME/codex-pet-limit-rings/settings.json"
-LOCK_FILE="${STATE_FILE%.json}.lock"
-LOG_FILE="$CODEX_HOME/codex-pet-limit-rings/turn-usage-hook.log"
 
 /usr/bin/python3 - "$CODEX_HOME" "$HOOK_SCRIPT" <<'PY'
+import fcntl
 import json
 import shutil
 import sys
@@ -22,6 +19,19 @@ hooks_path = codex_home / "hooks.json"
 timestamp = time.strftime("%Y%m%d%H%M%S")
 config_path = codex_home / "config.toml"
 install_state_path = codex_home / "codex-pet-limit-rings" / "install-state.json"
+settings_path = codex_home / "codex-pet-limit-rings" / "settings.json"
+worker_lock_path = codex_home / "codex-pet-limit-rings" / "turn-usage-worker.lock"
+lifecycle_lock_path = codex_home / "codex-pet-limit-rings" / "turn-usage-lifecycle.lock"
+cleanup_paths = [
+    codex_home / "codex-pet-limit-rings" / "turn-usage.json",
+    settings_path,
+    codex_home / "codex-pet-limit-rings" / "turn-usage.json.tmp",
+    codex_home / "codex-pet-limit-rings" / "turn-usage.lock",
+    codex_home / "codex-pet-limit-rings" / "turn-usage-hook.log",
+    codex_home / "codex-pet-limit-rings" / "turn-usage-hook.log.1",
+    codex_home / "codex-pet-limit-rings" / "turn-usage-queue.jsonl",
+    codex_home / "codex-pet-limit-rings" / "turn-usage-queue.jsonl.tmp",
+]
 block_begin = "# Codex Pet Limit Rings turn-usage hook: begin\n"
 block_end = "# Codex Pet Limit Rings turn-usage hook: end\n"
 
@@ -135,6 +145,36 @@ def restore_codex_hooks_setting(text):
     return "".join(lines)
 
 
+def with_lifecycle_lock(callback):
+    lifecycle_lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lifecycle_lock_path.open("a+", encoding="utf-8") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        callback()
+
+
+def disable_turn_usage():
+    settings_path.unlink(missing_ok=True)
+
+
+def wait_for_worker_idle():
+    worker_lock_path.parent.mkdir(parents=True, exist_ok=True)
+    deadline = time.monotonic() + 6.0
+    with worker_lock_path.open("a+", encoding="utf-8") as lock_file:
+        while True:
+            try:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                return
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    return
+                time.sleep(0.1)
+
+
+def cleanup_local_state():
+    for path in cleanup_paths:
+        path.unlink(missing_ok=True)
+
+
 if config_path.exists():
     original = config_path.read_text(encoding="utf-8")
     updated = restore_codex_hooks_setting(remove_marked_block(original))
@@ -193,10 +233,13 @@ if data is not None:
         with hooks_path.open("w", encoding="utf-8") as handle:
             json.dump(data, handle, indent=2, sort_keys=True)
             handle.write("\n")
+
+with_lifecycle_lock(disable_turn_usage)
+wait_for_worker_idle()
+with_lifecycle_lock(cleanup_local_state)
 PY
 
 rm -f "$HOOK_SCRIPT"
-rm -f "$STATE_FILE" "$SETTINGS_FILE" "$LOCK_FILE" "$LOG_FILE" "$LOG_FILE.1"
 
 echo "Codex turn-usage Stop hook uninstalled"
 echo "Restart Codex sessions for hook config changes to take effect"

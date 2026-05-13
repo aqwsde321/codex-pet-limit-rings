@@ -38,11 +38,11 @@ By default, it can fall back to recent rows in the local Codex SQLite log. For c
 tools/install-turn-usage-hook.sh
 ```
 
-The hook runs when Codex stops a turn, sums that turn's local `response.completed` usage rows, and writes compact counters to `~/.codex/codex-pet-limit-rings/turn-usage.json`. The menu-bar app reads that small state file and recent SQLite rows, merges them by `thread_id + turn_id`, and keeps the more complete duplicate when both sources contain the same turn.
+The hook runs when Codex stops a turn, appends a small `session/thread/turn` job to `~/.codex/codex-pet-limit-rings/turn-usage-queue.jsonl`, and returns immediately. A short-lived background worker then sums that turn's local `response.completed` usage rows and writes compact counters to `~/.codex/codex-pet-limit-rings/turn-usage.json`. The menu-bar app reads that small state file and recent SQLite rows, merges them by `thread_id + turn_id`, and keeps the more complete duplicate when both sources contain the same turn.
 
 The menu's `Track Turn Usage` toggle also writes `~/.codex/codex-pet-limit-rings/settings.json`. When the toggle is off, an installed hook exits immediately without reading SQLite or updating turn-usage state/log files.
 
-The hook is optional because it has more setup than the fallback reader. It modifies Codex hook config, requires Codex to trust the hook command, and needs Codex sessions to be restarted after install or uninstall. The tradeoff is better finalized records: hook records arrive after Codex finishes a turn, while fallback rows can still appear from periodic log polling.
+The hook is optional because it has more setup than the fallback reader. It modifies Codex hook config, requires Codex to trust the hook command, and needs Codex sessions to be restarted after install or uninstall. The tradeoff is better finalized records without making Codex wait for SQLite reads: hook records arrive after Codex finishes a turn, while fallback rows can still appear from periodic log polling.
 
 Use the fallback reader when you want the simplest setup. Use the hook when you want cleaner per-turn accounting and are comfortable with the extra local Codex hook configuration.
 
@@ -126,6 +126,7 @@ The app reads only local Codex files:
 - `~/.codex/.codex-global-state.json` tells it whether the pet is open and where it is.
 - `~/.codex/logs_2.sqlite` provides the latest local websocket `codex.rate_limits` event and recent response `usage` token counters.
 - `~/.codex/codex-pet-limit-rings/settings.json` stores whether `Track Turn Usage` is enabled so the optional hook can no-op when tracking is off.
+- `~/.codex/codex-pet-limit-rings/turn-usage-queue.jsonl` is an optional bounded local queue used by the Codex `Stop` hook worker. It stores only local ids, enqueue timestamps, and retry counters.
 - `~/.codex/codex-pet-limit-rings/turn-usage.json` is optionally written by the Codex `Stop` hook and contains session/thread/turn ids, timestamps, call counts, and token counters.
 - `~/.codex/codex-pet-limit-rings/turn-usage-hook.log` is an optional bounded diagnostic log for the hook and contains hook status, timestamps, session/turn ids, and call counts.
 

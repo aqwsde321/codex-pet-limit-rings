@@ -4,8 +4,10 @@ import json
 import os
 import signal
 import sqlite3
+import subprocess
 import sys
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 
@@ -14,10 +16,18 @@ MAX_LOG_ROWS = 2000
 MAX_RECORDS = 30
 MAX_WAIT_SECONDS = 2.5
 MAX_RUNTIME_SECONDS = 8.0
+MAX_WORKER_LOCK_WAIT_SECONDS = 35.0
+MAX_WORKER_RUNTIME_SECONDS = 30.0
 RETRY_INTERVAL_SECONDS = 0.25
 STABLE_READS_REQUIRED = 1
 SQLITE_BUSY_TIMEOUT_SECONDS = 0.15
 MAX_DIAGNOSTIC_LOG_BYTES = 128 * 1024
+QUEUE_FIRST_ATTEMPT_DELAY_SECONDS = 1.5
+QUEUE_RETRY_DELAY_SECONDS = 2.0
+MAX_QUEUE_JOB_AGE_SECONDS = 10 * 60
+MAX_QUEUE_JOBS = 200
+MAX_QUEUE_BYTES = 256 * 1024
+WORKER_ENV = "CODEX_PET_LIMIT_RINGS_WORKER"
 
 
 class HookRuntimeTimeout(Exception):
@@ -28,9 +38,9 @@ def raise_runtime_timeout(signum, frame):
     raise HookRuntimeTimeout()
 
 
-def install_runtime_alarm():
+def install_runtime_alarm(timeout_seconds=MAX_RUNTIME_SECONDS):
     signal.signal(signal.SIGALRM, raise_runtime_timeout)
-    signal.setitimer(signal.ITIMER_REAL, MAX_RUNTIME_SECONDS)
+    signal.setitimer(signal.ITIMER_REAL, timeout_seconds)
 
 
 def cancel_runtime_alarm():
@@ -53,6 +63,9 @@ def open_private_text(path, flags, mode):
 
 
 def main() -> int:
+    if os.environ.get(WORKER_ENV) == "1":
+        return worker_main()
+
     payload = {}
     try:
         install_runtime_alarm()
@@ -60,13 +73,17 @@ def main() -> int:
             print(json.dumps({"continue": True}, separators=(",", ":")))
             return 0
         payload = json.load(sys.stdin)
-        log_status("start", payload)
-        record = build_usage_record(payload)
-        if record is not None:
-            append_state_record(record)
-            log_status("recorded", payload, calls=len(record["calls"]))
-        else:
-            log_status("no_usage_rows", payload)
+        with lifecycle_lock():
+            if not turn_usage_enabled():
+                print(json.dumps({"continue": True}, separators=(",", ":")))
+                return 0
+            job = build_queue_job(payload)
+            if job is not None:
+                enqueue_job(job)
+                spawn_worker()
+                log_status("queued", payload)
+            else:
+                log_status("missing_turn", payload)
     except HookRuntimeTimeout:
         cancel_runtime_alarm()
         log_status("timeout", payload)
@@ -75,6 +92,31 @@ def main() -> int:
     finally:
         cancel_runtime_alarm()
     print(json.dumps({"continue": True}, separators=(",", ":")))
+    return 0
+
+
+def worker_main() -> int:
+    try:
+        install_runtime_alarm(MAX_WORKER_LOCK_WAIT_SECONDS + MAX_WORKER_RUNTIME_SECONDS)
+        if clear_queue_when_disabled():
+            return 0
+        lock_deadline = time.monotonic() + MAX_WORKER_LOCK_WAIT_SECONDS
+        worker_lock = acquire_worker_lock(lock_deadline)
+        if worker_lock is None:
+            return 0
+        with worker_lock:
+            install_runtime_alarm(MAX_WORKER_RUNTIME_SECONDS)
+            processing_deadline = time.monotonic() + MAX_WORKER_RUNTIME_SECONDS - 0.5
+            if clear_queue_when_disabled():
+                return 0
+            process_queue_until_idle(processing_deadline)
+    except HookRuntimeTimeout:
+        cancel_runtime_alarm()
+        log_status("worker_timeout", {})
+    except Exception:
+        log_status("worker_error", {})
+    finally:
+        cancel_runtime_alarm()
     return 0
 
 
@@ -90,7 +132,328 @@ def turn_usage_enabled():
         return False
 
 
-def build_usage_record(payload):
+def build_queue_job(payload):
+    turn_id = payload.get("turn_id")
+    if not isinstance(turn_id, str) or not turn_id:
+        return None
+
+    job = {
+        "version": 1,
+        "turn_id": turn_id,
+        "enqueued_at": time.time(),
+        "attempts": 0,
+    }
+    for key in ("session_id", "thread_id", "conversation_id"):
+        value = payload.get(key)
+        if isinstance(value, str) and value:
+            job[key] = value
+    return job
+
+
+def enqueue_job(job):
+    queue_path = default_queue_path()
+    ensure_private_dir(queue_path.parent)
+    lock_path = default_queue_lock_path()
+    with open_private_text(lock_path, os.O_RDWR | os.O_CREAT | os.O_APPEND, "a+") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        jobs = read_queue_jobs(queue_path)
+        jobs.append(job)
+        write_queue_jobs(queue_path, compact_queue_jobs(jobs))
+
+
+def spawn_worker():
+    env = os.environ.copy()
+    env[WORKER_ENV] = "1"
+    try:
+        subprocess.Popen(
+            [sys.executable, str(Path(__file__).resolve())],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            env=env,
+            close_fds=True,
+            start_new_session=True,
+        )
+    except Exception:
+        pass
+
+
+def acquire_worker_lock(deadline=None):
+    lock_path = default_worker_lock_path()
+    ensure_private_dir(lock_path.parent)
+    lock_file = open_private_text(lock_path, os.O_RDWR | os.O_CREAT | os.O_APPEND, "a+")
+    while True:
+        try:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return lock_file
+        except BlockingIOError:
+            if deadline is None or time.monotonic() >= deadline:
+                lock_file.close()
+                return None
+            time.sleep(0.1)
+
+
+def process_queue_until_idle(deadline):
+    while time.monotonic() < deadline:
+        if clear_queue_when_disabled():
+            return
+
+        job, wait_seconds = next_ready_queue_job()
+        if job is None:
+            if wait_seconds is None:
+                return
+            sleep_seconds = min(wait_seconds, max(0.0, deadline - time.monotonic()))
+            if sleep_seconds <= 0:
+                return
+            time.sleep(sleep_seconds)
+            continue
+
+        payload = queue_job_payload(job)
+        if clear_queue_when_disabled():
+            return
+
+        record = build_usage_record(payload, turn_usage_enabled)
+        if clear_queue_when_disabled():
+            return
+
+        if record is not None:
+            with lifecycle_lock():
+                if not turn_usage_enabled():
+                    clear_queue()
+                    return
+                append_state_record(record)
+                remove_queue_job(job)
+                log_status("recorded", payload, calls=len(record["calls"]))
+        else:
+            with lifecycle_lock():
+                if not turn_usage_enabled():
+                    clear_queue()
+                    return
+                retry_queue_job(job)
+                log_status("pending", payload)
+
+
+def clear_queue_when_disabled():
+    with lifecycle_lock():
+        if turn_usage_enabled():
+            return False
+        clear_queue()
+        return True
+
+
+@contextmanager
+def lifecycle_lock():
+    lock_path = default_lifecycle_lock_path()
+    ensure_private_dir(lock_path.parent)
+    with open_private_text(lock_path, os.O_RDWR | os.O_CREAT | os.O_APPEND, "a+") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        yield
+
+
+def next_ready_queue_job():
+    queue_path = default_queue_path()
+    lock_path = default_queue_lock_path()
+    ensure_private_dir(queue_path.parent)
+    with open_private_text(lock_path, os.O_RDWR | os.O_CREAT | os.O_APPEND, "a+") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        jobs = compact_queue_jobs(read_queue_jobs(queue_path))
+        write_queue_jobs(queue_path, jobs)
+
+    if not jobs:
+        return None, None
+
+    now = time.time()
+    waits = []
+    for job in jobs:
+        ready_at = queue_job_ready_at(job)
+        if ready_at <= now:
+            return job, None
+        waits.append(ready_at - now)
+    return None, max(0.0, min(waits)) if waits else None
+
+
+def retry_queue_job(job):
+    queue_path = default_queue_path()
+    lock_path = default_queue_lock_path()
+    job_key = queue_job_key(job)
+    with open_private_text(lock_path, os.O_RDWR | os.O_CREAT | os.O_APPEND, "a+") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        jobs = []
+        for existing in read_queue_jobs(queue_path):
+            if queue_job_key(existing) == job_key:
+                existing["attempts"] = int(existing.get("attempts") or 0) + 1
+                existing["last_attempt_at"] = time.time()
+            jobs.append(existing)
+        write_queue_jobs(queue_path, compact_queue_jobs(jobs))
+
+
+def remove_queue_job(job):
+    queue_path = default_queue_path()
+    lock_path = default_queue_lock_path()
+    job_key = queue_job_key(job)
+    with open_private_text(lock_path, os.O_RDWR | os.O_CREAT | os.O_APPEND, "a+") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        jobs = [existing for existing in read_queue_jobs(queue_path) if queue_job_key(existing) != job_key]
+        write_queue_jobs(queue_path, compact_queue_jobs(jobs))
+
+
+def clear_queue():
+    queue_path = default_queue_path()
+    tmp_path = queue_tmp_path(queue_path)
+    if not queue_path.exists() and not tmp_path.exists():
+        return
+
+    lock_path = default_queue_lock_path()
+    ensure_private_dir(queue_path.parent)
+    with open_private_text(lock_path, os.O_RDWR | os.O_CREAT | os.O_APPEND, "a+") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        write_queue_jobs(queue_path, [])
+
+
+def read_queue_jobs(queue_path):
+    jobs = []
+    try:
+        with open(queue_path, "r", encoding="utf-8") as handle:
+            for line in handle:
+                try:
+                    job = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                normalized = normalize_queue_job(job)
+                if normalized is not None:
+                    jobs.append(normalized)
+    except FileNotFoundError:
+        return []
+    except OSError:
+        return []
+    return jobs
+
+
+def write_queue_jobs(queue_path, jobs):
+    ensure_private_dir(queue_path.parent)
+    tmp_path = queue_tmp_path(queue_path)
+    if not jobs:
+        tmp_path.unlink(missing_ok=True)
+        queue_path.unlink(missing_ok=True)
+        fsync_parent_dir(queue_path.parent)
+        return
+
+    with open_private_text(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, "w") as tmp_file:
+        for job in jobs:
+            tmp_file.write(json.dumps(job, separators=(",", ":"), sort_keys=True))
+            tmp_file.write("\n")
+        tmp_file.flush()
+        os.fsync(tmp_file.fileno())
+    os.replace(tmp_path, queue_path)
+    os.chmod(queue_path, 0o600)
+    fsync_parent_dir(queue_path.parent)
+
+
+def compact_queue_jobs(jobs):
+    now = time.time()
+    by_key = {}
+    for job in jobs:
+        normalized = normalize_queue_job(job)
+        if normalized is None:
+            continue
+        if now - normalized["enqueued_at"] > MAX_QUEUE_JOB_AGE_SECONDS:
+            continue
+
+        job_key = queue_job_key(normalized)
+        existing = by_key.get(job_key)
+        if existing is None:
+            by_key[job_key] = normalized
+            continue
+
+        existing["enqueued_at"] = min(existing["enqueued_at"], normalized["enqueued_at"])
+        existing["attempts"] = max(int(existing.get("attempts") or 0), int(normalized.get("attempts") or 0))
+        for key in ("session_id", "thread_id", "conversation_id", "last_attempt_at"):
+            if not existing.get(key) and normalized.get(key):
+                existing[key] = normalized[key]
+
+    compacted = sorted(by_key.values(), key=lambda item: item["enqueued_at"])
+    if len(compacted) > MAX_QUEUE_JOBS:
+        compacted = compacted[-MAX_QUEUE_JOBS:]
+
+    while compacted and queue_jobs_size(compacted) > MAX_QUEUE_BYTES:
+        compacted.pop(0)
+    return compacted
+
+
+def normalize_queue_job(job):
+    if not isinstance(job, dict):
+        return None
+    turn_id = job.get("turn_id")
+    if not isinstance(turn_id, str) or not turn_id:
+        return None
+
+    normalized = {"version": 1, "turn_id": turn_id}
+    for key in ("session_id", "thread_id", "conversation_id"):
+        value = job.get(key)
+        if isinstance(value, str) and value:
+            normalized[key] = value
+
+    try:
+        normalized["enqueued_at"] = float(job.get("enqueued_at"))
+    except (TypeError, ValueError):
+        normalized["enqueued_at"] = time.time()
+
+    try:
+        normalized["attempts"] = max(0, int(job.get("attempts") or 0))
+    except (TypeError, ValueError):
+        normalized["attempts"] = 0
+
+    try:
+        last_attempt_at = float(job.get("last_attempt_at"))
+        if last_attempt_at > 0:
+            normalized["last_attempt_at"] = last_attempt_at
+    except (TypeError, ValueError):
+        pass
+
+    return normalized
+
+
+def queue_job_key(job):
+    return "|".join(str(job.get(key) or "") for key in ("session_id", "thread_id", "conversation_id", "turn_id"))
+
+
+def queue_job_payload(job):
+    payload = {}
+    for key in ("session_id", "thread_id", "conversation_id", "turn_id"):
+        value = job.get(key)
+        if value:
+            payload[key] = value
+    return payload
+
+
+def queue_job_ready_at(job):
+    if int(job.get("attempts") or 0) > 0 and job.get("last_attempt_at"):
+        return float(job["last_attempt_at"]) + QUEUE_RETRY_DELAY_SECONDS
+    return float(job["enqueued_at"]) + QUEUE_FIRST_ATTEMPT_DELAY_SECONDS
+
+
+def queue_jobs_size(jobs):
+    return sum(len(json.dumps(job, separators=(",", ":"), sort_keys=True).encode("utf-8")) + 1 for job in jobs)
+
+
+def fsync_parent_dir(parent):
+    try:
+        fd = os.open(parent, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(fd)
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
+
+
+def queue_tmp_path(queue_path):
+    return queue_path.with_suffix(".jsonl.tmp")
+
+
+def build_usage_record(payload, should_continue=None):
     session_id = payload.get("session_id")
     turn_id = payload.get("turn_id")
     if not turn_id:
@@ -102,6 +465,8 @@ def build_usage_record(payload):
     last_signature = None
     stable_reads = 0
     while time.monotonic() <= deadline:
+        if should_continue is not None and not should_continue():
+            return None
         current_rows = read_usage_rows(identity_candidates, turn_id)
         current_signature = usage_rows_signature(current_rows)
         if current_rows:
@@ -332,6 +697,25 @@ def default_settings_path():
     if override:
         return Path(override).expanduser()
     return default_codex_home() / "codex-pet-limit-rings" / "settings.json"
+
+
+def default_queue_path():
+    override = os.environ.get("CODEX_PET_LIMIT_RINGS_TURN_USAGE_QUEUE")
+    if override:
+        return Path(override).expanduser()
+    return default_codex_home() / "codex-pet-limit-rings" / "turn-usage-queue.jsonl"
+
+
+def default_queue_lock_path():
+    return default_queue_path().with_suffix(".lock")
+
+
+def default_worker_lock_path():
+    return default_codex_home() / "codex-pet-limit-rings" / "turn-usage-worker.lock"
+
+
+def default_lifecycle_lock_path():
+    return default_codex_home() / "codex-pet-limit-rings" / "turn-usage-lifecycle.lock"
 
 
 def log_status(status, payload, calls=None):
