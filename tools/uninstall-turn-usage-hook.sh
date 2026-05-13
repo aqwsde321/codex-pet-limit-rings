@@ -4,6 +4,7 @@ set -euo pipefail
 CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
 HOOK_SCRIPT="$CODEX_HOME/codex-pet-limit-rings/hooks/codex-turn-usage-stop-hook.py"
 STATE_FILE="$CODEX_HOME/codex-pet-limit-rings/turn-usage.json"
+SETTINGS_FILE="$CODEX_HOME/codex-pet-limit-rings/settings.json"
 LOCK_FILE="${STATE_FILE%.json}.lock"
 LOG_FILE="$CODEX_HOME/codex-pet-limit-rings/turn-usage-hook.log"
 
@@ -195,7 +196,7 @@ if data is not None:
 PY
 
 rm -f "$HOOK_SCRIPT"
-rm -f "$STATE_FILE" "$LOCK_FILE" "$LOG_FILE" "$LOG_FILE.1"
+rm -f "$STATE_FILE" "$SETTINGS_FILE" "$LOCK_FILE" "$LOG_FILE" "$LOG_FILE.1"
 
 echo "Codex turn-usage Stop hook uninstalled"
 echo "Restart Codex sessions for hook config changes to take effect"

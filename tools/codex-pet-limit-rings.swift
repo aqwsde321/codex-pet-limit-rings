@@ -213,11 +213,17 @@ private struct HookUsageCallPayload: Decodable {
     var output_tokens: Int64?
 }
 
+private struct TurnUsageSettingsPayload: Encodable {
+    var version: Int
+    var track_turn_usage: Bool
+}
+
 struct LimitRingsConfig {
     var codexHome: URL
     var globalStatePath: URL
     var logsPath: URL
     var turnUsageStatePath: URL
+    var turnUsageSettingsPath: URL
     var previewPath: URL?
     var fallbackSize: CGFloat = 220
     var mouseMonitorEnabled: Bool = true
@@ -1517,6 +1523,7 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
         ringView.displayStyle = displayStyle
         ringView.barWidth = barWidthPreset.width
         ringView.barOffset = usageBarOffset
+        writeTurnUsageSettings()
     }
 
     deinit {
@@ -1594,6 +1601,20 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
         guard turnUsageEnabled else { return }
         usageTimer = Timer.scheduledTimer(withTimeInterval: usageToastPollInterval, repeats: true) { [weak self] _ in
             self?.updateUsageDetails()
+        }
+    }
+
+    private func writeTurnUsageSettings() {
+        let payload = TurnUsageSettingsPayload(version: 1, track_turn_usage: turnUsageEnabled)
+        do {
+            let data = try JSONEncoder().encode(payload)
+            let directory = config.turnUsageSettingsPath.deletingLastPathComponent()
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
+            try data.write(to: config.turnUsageSettingsPath, options: .atomic)
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: config.turnUsageSettingsPath.path)
+        } catch {
+            fputs("codex-pet-limit-rings: failed to write turn usage settings: \(error)\n", stderr)
         }
     }
 
@@ -2306,6 +2327,7 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
     @objc private func toggleTurnUsage(_ sender: NSMenuItem) {
         turnUsageEnabled.toggle()
         UserDefaults.standard.set(turnUsageEnabled, forKey: turnUsageEnabledDefaultsKey)
+        writeTurnUsageSettings()
         updateTurnUsageMenuItem()
         updateUsageTimer()
         if turnUsageEnabled {
@@ -2793,6 +2815,7 @@ func parseConfig() -> LimitRingsConfig? {
         globalStatePath: codexHome.appendingPathComponent(".codex-global-state.json"),
         logsPath: defaultLogsPath(codexHome: codexHome),
         turnUsageStatePath: defaultTurnUsageStatePath(codexHome: codexHome),
+        turnUsageSettingsPath: defaultTurnUsageSettingsPath(codexHome: codexHome),
         previewPath: nil
     )
 
@@ -2819,6 +2842,7 @@ func parseConfig() -> LimitRingsConfig? {
             config.globalStatePath = url.appendingPathComponent(".codex-global-state.json")
             config.logsPath = defaultLogsPath(codexHome: url)
             config.turnUsageStatePath = defaultTurnUsageStatePath(codexHome: url)
+            config.turnUsageSettingsPath = defaultTurnUsageSettingsPath(codexHome: url)
         case "--logs":
             guard let value = args.first else { return nil }
             args.removeFirst()
@@ -2856,6 +2880,10 @@ func defaultLogsPath(codexHome: URL) -> URL {
 
 func defaultTurnUsageStatePath(codexHome: URL) -> URL {
     codexHome.appendingPathComponent("codex-pet-limit-rings/turn-usage.json")
+}
+
+func defaultTurnUsageSettingsPath(codexHome: URL) -> URL {
+    codexHome.appendingPathComponent("codex-pet-limit-rings/settings.json")
 }
 
 guard let config = parseConfig() else {

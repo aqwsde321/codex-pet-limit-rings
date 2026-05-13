@@ -34,6 +34,7 @@ The app reads local Codex files only:
 - `~/.codex/.codex-global-state.json`: current pet bounds, using `electron-avatar-overlay-bounds.mascot`.
 - `electron-avatar-overlay-open` in the same state file: whether the Codex pet is currently open.
 - `~/.codex/logs_2.sqlite`: usage source using the newest websocket `codex.rate_limits` event and recent response `usage` token counters from `target = 'codex_api::endpoint::responses_websocket'`.
+- `~/.codex/codex-pet-limit-rings/settings.json`: app-written `Track Turn Usage` setting used by the optional hook to no-op when tracking is off.
 - `~/.codex/codex-pet-limit-rings/turn-usage.json`: optional finalized turn-usage records written by the opt-in `Stop` hook, containing ids, timestamps, call counts, and token counters.
 - `~/.codex/codex-pet-limit-rings/turn-usage-hook.log`: optional bounded hook diagnostic log with hook status, timestamps, ids, and call counts.
 
@@ -98,6 +99,8 @@ The hook installer copies the hook script into:
 and registers an inline `[[hooks.Stop]]` entry in `~/.codex/config.toml`. It also enables `codex_hooks` in the same file. Restart Codex sessions after installing or uninstalling the hook so Codex reloads hook configuration.
 
 This hook path has more setup than the default SQLite fallback: Codex must trust the local hook command, and existing sessions must restart before it runs. It is still optional. Use it when you want finalized turn-usage records from Codex's `Stop` event; the app still keeps the periodic recent-log polling fallback and merges both sources.
+
+The hook remains installed when the menu's `Track Turn Usage` item is off, but it exits immediately based on the app-written settings file and does not update turn-usage state.
 
 To remove only the turn-usage hook:
 

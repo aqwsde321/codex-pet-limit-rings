@@ -56,6 +56,9 @@ def main() -> int:
     payload = {}
     try:
         install_runtime_alarm()
+        if not turn_usage_enabled():
+            print(json.dumps({"continue": True}, separators=(",", ":")))
+            return 0
         payload = json.load(sys.stdin)
         log_status("start", payload)
         record = build_usage_record(payload)
@@ -73,6 +76,18 @@ def main() -> int:
         cancel_runtime_alarm()
     print(json.dumps({"continue": True}, separators=(",", ":")))
     return 0
+
+
+def turn_usage_enabled():
+    settings_path = default_settings_path()
+    try:
+        with open(settings_path, "r", encoding="utf-8") as settings_file:
+            settings = json.load(settings_file)
+        if not isinstance(settings, dict):
+            return False
+        return settings.get("track_turn_usage") is True
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return False
 
 
 def build_usage_record(payload):
@@ -310,6 +325,13 @@ def default_state_path():
     if override:
         return Path(override).expanduser()
     return default_codex_home() / "codex-pet-limit-rings" / "turn-usage.json"
+
+
+def default_settings_path():
+    override = os.environ.get("CODEX_PET_LIMIT_RINGS_SETTINGS")
+    if override:
+        return Path(override).expanduser()
+    return default_codex_home() / "codex-pet-limit-rings" / "settings.json"
 
 
 def log_status(status, payload, calls=None):

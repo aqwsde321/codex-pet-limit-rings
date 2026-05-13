@@ -21,11 +21,17 @@ When `Track Turn Usage` is on, the app additionally:
 - Shows the grouped values in the menu and, briefly, shows the latest changed group in an overlay toast.
 - Computes `Limit delta` from consecutive local `codex.rate_limits` events.
 
-When `Track Turn Usage` is off, the app stops polling and parsing local turn-usage state, hides the recent-turn and limit-delta menu items, and clears any visible turn-usage toast.
+When `Track Turn Usage` is off, the app stops polling and parsing local turn-usage state, hides the recent-turn and limit-delta menu items, and clears any visible turn-usage toast. If the optional `Stop` hook is installed, the hook also reads the app-written setting and exits immediately without reading SQLite or updating turn-usage state/log files.
 
 ## Data Source
 
-The app reads only local files. If the optional `Stop` hook is installed, the preferred recent-turn source is:
+The app reads only local files. The app and optional `Stop` hook coordinate through:
+
+```text
+~/.codex/codex-pet-limit-rings/settings.json
+```
+
+This file stores whether `Track Turn Usage` is enabled. The hook treats a missing or malformed settings file as disabled.
 
 ```text
 ~/.codex/codex-pet-limit-rings/turn-usage.json
@@ -90,6 +96,8 @@ and registers an inline `[[hooks.Stop]]` entry in `~/.codex/config.toml`. It als
 When Codex ends a turn, the hook receives the Codex hook payload on stdin. It uses `turn_id` plus available local session/thread identifiers to find matching local `response.completed` usage rows in `logs_2.sqlite`, sums the calls for that turn, and writes the compact result to `turn-usage.json`.
 
 This adds finalized hook records to the recent-turn behavior: Codex tells the hook when a turn stops, the hook writes a compact result, and the app reads that state file. The app still polls recent SQLite rows too, then merges both sources, so fallback rows can appear before a matching hook record is written.
+
+The hook is installed independently from the menu toggle. The toggle controls collection by writing `settings.json`; when it is off, the installed hook returns immediately and does not touch SQLite.
 
 To remove the hook:
 
