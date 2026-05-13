@@ -2,6 +2,7 @@
 import fcntl
 import json
 import os
+import signal
 import sqlite3
 import sys
 import time
@@ -11,9 +12,29 @@ from pathlib import Path
 TARGET = "codex_api::endpoint::responses_websocket"
 MAX_LOG_ROWS = 2000
 MAX_RECORDS = 30
-MAX_WAIT_SECONDS = 4.0
+MAX_WAIT_SECONDS = 2.5
+MAX_RUNTIME_SECONDS = 8.0
 RETRY_INTERVAL_SECONDS = 0.25
+STABLE_READS_REQUIRED = 1
+SQLITE_BUSY_TIMEOUT_SECONDS = 0.15
 MAX_DIAGNOSTIC_LOG_BYTES = 128 * 1024
+
+
+class HookRuntimeTimeout(Exception):
+    pass
+
+
+def raise_runtime_timeout(signum, frame):
+    raise HookRuntimeTimeout()
+
+
+def install_runtime_alarm():
+    signal.signal(signal.SIGALRM, raise_runtime_timeout)
+    signal.setitimer(signal.ITIMER_REAL, MAX_RUNTIME_SECONDS)
+
+
+def cancel_runtime_alarm():
+    signal.setitimer(signal.ITIMER_REAL, 0)
 
 
 def ensure_private_dir(path):
@@ -32,7 +53,9 @@ def open_private_text(path, flags, mode):
 
 
 def main() -> int:
+    payload = {}
     try:
+        install_runtime_alarm()
         payload = json.load(sys.stdin)
         log_status("start", payload)
         record = build_usage_record(payload)
@@ -41,8 +64,13 @@ def main() -> int:
             log_status("recorded", payload, calls=len(record["calls"]))
         else:
             log_status("no_usage_rows", payload)
+    except HookRuntimeTimeout:
+        cancel_runtime_alarm()
+        log_status("timeout", payload)
     except Exception:
-        log_status("error", {})
+        log_status("error", payload)
+    finally:
+        cancel_runtime_alarm()
     print(json.dumps({"continue": True}, separators=(",", ":")))
     return 0
 
@@ -65,7 +93,7 @@ def build_usage_record(payload):
             rows = current_rows
             if current_signature == last_signature:
                 stable_reads += 1
-                if stable_reads >= 2:
+                if stable_reads >= STABLE_READS_REQUIRED:
                     break
             else:
                 stable_reads = 0
@@ -110,7 +138,13 @@ def read_usage_rows(identity_candidates, turn_id):
         return []
 
     rows = []
-    with sqlite3.connect(f"file:{logs_path}?mode=ro", uri=True) as db:
+    try:
+        db = sqlite3.connect(f"file:{logs_path}?mode=ro", timeout=SQLITE_BUSY_TIMEOUT_SECONDS, uri=True)
+    except sqlite3.Error:
+        return []
+
+    try:
+        db.execute(f"PRAGMA busy_timeout = {int(SQLITE_BUSY_TIMEOUT_SECONDS * 1000)}")
         query = """
             SELECT ts, ts_nanos, thread_id, feedback_log_body
             FROM logs INDEXED BY idx_logs_ts
@@ -152,6 +186,10 @@ def read_usage_rows(identity_candidates, turn_id):
                 "cached_tokens": int((usage.get("input_tokens_details") or {}).get("cached_tokens") or 0),
                 "output_tokens": int(output_tokens),
             })
+    except sqlite3.Error:
+        return []
+    finally:
+        db.close()
 
     rows = filter_identity_rows(rows, identity_candidates)
     return sorted(rows, key=lambda row: row["observed_at"])
