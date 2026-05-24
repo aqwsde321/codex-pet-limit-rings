@@ -77,6 +77,7 @@ The rings read:
 - `~/.codex/codex-pet-limit-rings/settings.json` for the app-written `Track Turn Usage` setting. The optional hook should no-op when this setting is off or missing.
 - `~/.codex/codex-pet-limit-rings/turn-usage-queue.jsonl` when the optional `Stop` hook is installed. This bounded queue should contain only ids, enqueue timestamps, and retry counters, and the hook should return immediately after enqueueing.
 - `~/.codex/codex-pet-limit-rings/turn-usage.json` when the optional `Stop` hook is installed. This compact state file should contain only ids, response ids when present, timestamps, call counts, and token counters, not prompt or tool-output text.
+- `~/.codex/codex-pet-limit-rings/turn-usage-summary.json` when the optional `Stop` hook is installed. This compact rollup should contain only recent-record token totals for today and the latest session.
 
 The app should not read `~/.codex/auth.json` or call a remote usage endpoint. The top usage bar or outer ring is the short-window remaining percentage. The bottom usage bar or inner ring is the weekly remaining percentage. The menu summary should say `Local` and include the local log age when the local log value is active. The menu can show recent per-thread usage token counts and the latest limit delta, and the overlay can show a short toast for newly observed turn usage. Display style, position offsets, and bar-width presets are controlled from the menu and persisted in `UserDefaults`.
 

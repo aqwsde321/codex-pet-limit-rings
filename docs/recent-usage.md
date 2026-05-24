@@ -45,6 +45,12 @@ That file is a bounded local queue used by the optional `Stop` hook. The hook ap
 
 That file contains full local session/thread/turn ids, observed/update timestamps, per-turn call counts, per-call timestamps, and token counters. It does not store prompt text, screenshots, repository contents, tool output, or auth data.
 
+```text
+~/.codex/codex-pet-limit-rings/turn-usage-summary.json
+```
+
+That file is a compact rollup derived from the recent `turn-usage.json` records. It contains today's and the latest session's `Used`, input, cached, output, turn-count, and call-count totals for the records still retained in local state.
+
 The hook also writes a bounded local diagnostic log:
 
 ```text
@@ -99,7 +105,7 @@ The installer copies the hook script to:
 
 and registers an inline `[[hooks.Stop]]` entry in `~/.codex/config.toml`. It also enables `codex_hooks` in the same file. Older installer versions used `~/.codex/hooks.json`; the current installer removes this package's legacy `hooks.json` entry to avoid duplicate runs.
 
-When Codex ends a turn, the hook receives the Codex hook payload on stdin. It writes a small local queue job and returns so Codex does not wait on SQLite. A short-lived background worker then uses `turn_id` plus available local session/thread identifiers to find matching local `response.completed` usage rows in `logs_2.sqlite`, dedupes calls by `response.id` when present, sums the calls for that turn, and writes the compact result to `turn-usage.json` with raw counters plus goal-style `effective_tokens`.
+When Codex ends a turn, the hook receives the Codex hook payload on stdin. It writes a small local queue job and returns so Codex does not wait on SQLite. A short-lived background worker then uses `turn_id` plus available local session/thread identifiers to find matching local `response.completed` usage rows in `logs_2.sqlite`, dedupes calls by `response.id` when present, sums the calls for that turn, writes the compact result to `turn-usage.json` with raw counters plus goal-style `effective_tokens`, and rewrites `turn-usage-summary.json` from the retained recent records.
 
 This adds finalized hook records to the recent-turn behavior: Codex tells the hook when a turn stops, the worker writes a compact result, and the app reads that state file. The app still polls recent SQLite rows too, then merges both sources, so fallback rows can appear before a matching hook record is written.
 
@@ -140,13 +146,14 @@ The menu shows up to three recent turn groups:
 
 ```text
 Recent turns
+Recent Used  Today 16.2k  |  Session 9.3k
 W0/a327/81d2  2c  Used 8.5k  I192k  Ca186k  O1.6k
 W1/8089/c1f4  1c  Used 7.7k  I7.7k  Ca0  O41
 
 Limit delta  Short -0.4% | Weekly -0.1%
 ```
 
-The recent turn rows are compact and color-coded in the menu. They include a short `turn_id` suffix so repeated `W0/a327` rows can still be distinguished.
+The recent usage rollup is based on retained hook records and is shown only when `turn-usage-summary.json` is available. The recent turn rows are compact and color-coded in the menu. They include a short `turn_id` suffix so repeated `W0/a327` rows can still be distinguished.
 
 The `Track Turn Usage` menu item controls this whole section. Turning it off hides these rows and stops the extra local usage-log polling.
 
@@ -219,6 +226,7 @@ This is an account-level change. It is not attributed to a specific thread. If s
 ## Known Limits
 
 - `Used` is a goal-style local calculation from observed response usage rows, not the official account-wide rate-limit formula.
+- `Recent Used` totals are derived from retained recent records, not a durable all-time daily ledger.
 - Account-wide limit deltas can still differ from this per-turn response-usage formula.
 - A single user-visible question can trigger multiple model calls; the hook reports these as multiple calls inside the same `thread_id + turn_id` when Codex logs them that way, deduping repeated `response.id` values when present.
 - The app can aggregate multiple usage events inside a `turn_id`, but it does not inspect prompt text to infer semantic question boundaries.

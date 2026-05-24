@@ -665,6 +665,79 @@ def append_state_record(record):
             json.dump(state, tmp_file, separators=(",", ":"), sort_keys=True)
             tmp_file.write("\n")
         os.replace(tmp_path, state_path)
+        write_summary_state(records)
+
+
+def write_summary_state(records):
+    summary_path = default_summary_path()
+    ensure_private_dir(summary_path.parent)
+    today_key = time.strftime("%Y-%m-%d", time.localtime())
+    latest_session_key = next((session_key_for_record(record) for record in records if session_key_for_record(record)), None)
+    today_records = [
+        record for record in records
+        if date_key_for_record(record) == today_key
+    ]
+    latest_session_records = [
+        record for record in records
+        if latest_session_key and session_key_for_record(record) == latest_session_key
+    ]
+    summary = {
+        "version": 1,
+        "updated_at": time.time(),
+        "source": "recent_records",
+        "record_count": len(records),
+        "today": usage_totals(today_records, {"date": today_key}),
+        "latest_session": usage_totals(latest_session_records, {"session_id": latest_session_key} if latest_session_key else {}),
+    }
+    tmp_path = summary_path.with_suffix(".json.tmp")
+    with open_private_text(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, "w") as tmp_file:
+        json.dump(summary, tmp_file, separators=(",", ":"), sort_keys=True)
+        tmp_file.write("\n")
+    os.replace(tmp_path, summary_path)
+
+
+def usage_totals(records, extra):
+    totals = {
+        "turn_count": len(records),
+        "call_count": sum(call_count_for_record(record) for record in records),
+        "input_tokens": sum(int(record.get("input_tokens") or 0) for record in records),
+        "cached_tokens": sum(int(record.get("cached_tokens") or 0) for record in records),
+        "output_tokens": sum(int(record.get("output_tokens") or 0) for record in records),
+        "effective_tokens": sum(effective_tokens_for_record(record) for record in records),
+    }
+    totals.update(extra)
+    return totals
+
+
+def call_count_for_record(record):
+    calls = record.get("calls")
+    return len(calls) if isinstance(calls, list) and calls else 1
+
+
+def effective_tokens_for_record(record):
+    effective_tokens = record.get("effective_tokens")
+    if effective_tokens is not None:
+        return int(effective_tokens)
+    return effective_token_count(
+        int(record.get("input_tokens") or 0),
+        int(record.get("cached_tokens") or 0),
+        int(record.get("output_tokens") or 0),
+    )
+
+
+def session_key_for_record(record):
+    session_id = record.get("session_id")
+    if isinstance(session_id, str) and session_id:
+        return session_id
+    thread_id = record.get("thread_id")
+    return thread_id if isinstance(thread_id, str) and thread_id else None
+
+
+def date_key_for_record(record):
+    observed_at = record.get("observed_at")
+    if not isinstance(observed_at, (int, float)):
+        return None
+    return time.strftime("%Y-%m-%d", time.localtime(float(observed_at)))
 
 
 def read_state(state_path):
@@ -725,6 +798,13 @@ def default_state_path():
     if override:
         return Path(override).expanduser()
     return default_codex_home() / "codex-pet-limit-rings" / "turn-usage.json"
+
+
+def default_summary_path():
+    override = os.environ.get("CODEX_PET_LIMIT_RINGS_TURN_USAGE_SUMMARY")
+    if override:
+        return Path(override).expanduser()
+    return default_codex_home() / "codex-pet-limit-rings" / "turn-usage-summary.json"
 
 
 def default_settings_path():
