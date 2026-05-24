@@ -24,9 +24,11 @@ worker_lock_path = codex_home / "codex-pet-limit-rings" / "turn-usage-worker.loc
 lifecycle_lock_path = codex_home / "codex-pet-limit-rings" / "turn-usage-lifecycle.lock"
 cleanup_paths = [
     codex_home / "codex-pet-limit-rings" / "turn-usage.json",
+    codex_home / "codex-pet-limit-rings" / "turn-usage-ledger.json",
     codex_home / "codex-pet-limit-rings" / "turn-usage-summary.json",
     settings_path,
     codex_home / "codex-pet-limit-rings" / "turn-usage.json.tmp",
+    codex_home / "codex-pet-limit-rings" / "turn-usage-ledger.json.tmp",
     codex_home / "codex-pet-limit-rings" / "turn-usage-summary.json.tmp",
     codex_home / "codex-pet-limit-rings" / "turn-usage.lock",
     codex_home / "codex-pet-limit-rings" / "turn-usage-hook.log",

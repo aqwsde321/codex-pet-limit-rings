@@ -38,7 +38,7 @@ By default, it can fall back to recent rows in the local Codex SQLite log. For c
 tools/install-turn-usage-hook.sh
 ```
 
-The hook runs when Codex stops a turn, appends a small `session/thread/turn` job to `~/.codex/codex-pet-limit-rings/turn-usage-queue.jsonl`, and returns immediately. A short-lived background worker then sums that turn's local `response.completed` usage rows, dedupes calls by `response.id` when present, and writes compact counters, including goal-style `effective_tokens`, to `~/.codex/codex-pet-limit-rings/turn-usage.json`. It also writes `turn-usage-summary.json`, a recent-record rollup for today's and the latest session's `Used` totals. The menu-bar app reads those small state files and recent SQLite rows, merges duplicate turns by `thread_id + turn_id`, and keeps the more complete duplicate when both sources contain the same turn.
+The hook runs when Codex stops a turn, appends a small `session/thread/turn` job to `~/.codex/codex-pet-limit-rings/turn-usage-queue.jsonl`, and returns immediately. A short-lived background worker then sums that turn's local `response.completed` usage rows, dedupes calls by `response.id` when present, and writes compact counters, including goal-style `effective_tokens`, to `~/.codex/codex-pet-limit-rings/turn-usage.json`. It also updates `turn-usage-ledger.json` and writes `turn-usage-summary.json`, a bounded ledger rollup for today's and the latest session's `Used` totals. The menu-bar app reads those small state files and recent SQLite rows, merges duplicate turns by `thread_id + turn_id`, and keeps the more complete duplicate when both sources contain the same turn.
 
 The menu's `Track Turn Usage` toggle also writes `~/.codex/codex-pet-limit-rings/settings.json`. When the toggle is off, an installed hook exits immediately without reading SQLite or updating turn-usage state/log files.
 
@@ -49,7 +49,7 @@ Use the fallback reader when you want the simplest setup. Use the hook when you 
 The menu and toast show:
 
 - `Used`: goal-style used tokens, calculated as `max(0, In - Cached) + Out`.
-- `Recent Used`: today and latest-session `Used` totals from the hook's recent turn records when available.
+- `Used Today` and `Session`: today and latest-session `Used` totals from the hook's bounded ledger when available.
 - `I`: input tokens reported by the response usage object.
 - `Ca`: cached input tokens reported by the response usage object.
 - `O`: output tokens reported by the response usage object.
@@ -129,7 +129,8 @@ The app reads only local Codex files:
 - `~/.codex/codex-pet-limit-rings/settings.json` stores whether `Track Turn Usage` is enabled so the optional hook can no-op when tracking is off.
 - `~/.codex/codex-pet-limit-rings/turn-usage-queue.jsonl` is an optional bounded local queue used by the Codex `Stop` hook worker. It stores only local ids, enqueue timestamps, and retry counters.
 - `~/.codex/codex-pet-limit-rings/turn-usage.json` is optionally written by the Codex `Stop` hook and contains session/thread/turn ids, response ids when present, timestamps, call counts, raw token counters, and goal-style `effective_tokens`.
-- `~/.codex/codex-pet-limit-rings/turn-usage-summary.json` is optionally written by the Codex `Stop` hook and contains recent-record rollups for today's and the latest session's token counters.
+- `~/.codex/codex-pet-limit-rings/turn-usage-ledger.json` is optionally written by the Codex `Stop` hook and contains bounded per-turn counters used to avoid duplicate summary accumulation.
+- `~/.codex/codex-pet-limit-rings/turn-usage-summary.json` is optionally written by the Codex `Stop` hook and contains bounded ledger rollups for today's and the latest session's token counters.
 - `~/.codex/codex-pet-limit-rings/turn-usage-hook.log` is an optional bounded diagnostic log for the hook and contains hook status, timestamps, session/turn ids, and call counts.
 
 It does not require an OpenAI API key, does not read `~/.codex/auth.json`, and does not call a remote usage endpoint. It does not send pet images, screenshots, prompts, or repo contents anywhere.

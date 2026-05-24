@@ -14,6 +14,8 @@ from pathlib import Path
 TARGET = "codex_api::endpoint::responses_websocket"
 MAX_LOG_ROWS = 2000
 MAX_RECORDS = 30
+MAX_LEDGER_RECORDS = 500
+MAX_LEDGER_AGE_SECONDS = 7 * 24 * 60 * 60
 MAX_WAIT_SECONDS = 2.5
 MAX_RUNTIME_SECONDS = 8.0
 MAX_WORKER_LOCK_WAIT_SECONDS = 35.0
@@ -665,7 +667,82 @@ def append_state_record(record):
             json.dump(state, tmp_file, separators=(",", ":"), sort_keys=True)
             tmp_file.write("\n")
         os.replace(tmp_path, state_path)
-        write_summary_state(records)
+        ledger_records = update_ledger_state(record, records)
+        write_summary_state(ledger_records)
+
+
+def update_ledger_state(record, seed_records):
+    ledger_path = default_ledger_path()
+    ensure_private_dir(ledger_path.parent)
+    ledger_state = read_state(ledger_path)
+    ledger_records = ledger_state.get("records") or []
+    if not isinstance(ledger_records, list):
+        ledger_records = []
+    if not ledger_records:
+        ledger_records = [compact_ledger_record(existing) for existing in seed_records]
+
+    key = ledger_key(record)
+    ledger_records = [
+        existing for existing in ledger_records
+        if ledger_key(existing) != key
+    ]
+    ledger_records.insert(0, compact_ledger_record(record))
+    ledger_records = prune_ledger_records(ledger_records)
+    state = {
+        "version": 1,
+        "updated_at": time.time(),
+        "max_age_seconds": MAX_LEDGER_AGE_SECONDS,
+        "max_records": MAX_LEDGER_RECORDS,
+        "records": ledger_records,
+    }
+    tmp_path = ledger_path.with_suffix(".json.tmp")
+    with open_private_text(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, "w") as tmp_file:
+        json.dump(state, tmp_file, separators=(",", ":"), sort_keys=True)
+        tmp_file.write("\n")
+    os.replace(tmp_path, ledger_path)
+    return ledger_records
+
+
+def compact_ledger_record(record):
+    compact = {
+        "thread_id": record.get("thread_id"),
+        "turn_id": record.get("turn_id"),
+        "observed_at": record.get("observed_at"),
+        "input_tokens": int(record.get("input_tokens") or 0),
+        "cached_tokens": int(record.get("cached_tokens") or 0),
+        "output_tokens": int(record.get("output_tokens") or 0),
+        "effective_tokens": effective_tokens_for_record(record),
+        "call_count": call_count_for_record(record),
+    }
+    session_id = record.get("session_id")
+    if isinstance(session_id, str) and session_id:
+        compact["session_id"] = session_id
+    return compact
+
+
+def prune_ledger_records(records):
+    cutoff = time.time() - MAX_LEDGER_AGE_SECONDS
+    deduped = []
+    seen_keys = set()
+    for record in sorted(records, key=lambda item: item.get("observed_at") or 0, reverse=True):
+        observed_at = record.get("observed_at")
+        if isinstance(observed_at, (int, float)) and float(observed_at) < cutoff:
+            continue
+        key = ledger_key(record)
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        deduped.append(record)
+        if len(deduped) >= MAX_LEDGER_RECORDS:
+            break
+    return deduped
+
+
+def ledger_key(record):
+    return (
+        record.get("thread_id") or record.get("session_id"),
+        record.get("turn_id"),
+    )
 
 
 def write_summary_state(records):
@@ -684,7 +761,7 @@ def write_summary_state(records):
     summary = {
         "version": 1,
         "updated_at": time.time(),
-        "source": "recent_records",
+        "source": "ledger",
         "record_count": len(records),
         "today": usage_totals(today_records, {"date": today_key}),
         "latest_session": usage_totals(latest_session_records, {"session_id": latest_session_key} if latest_session_key else {}),
@@ -710,6 +787,9 @@ def usage_totals(records, extra):
 
 
 def call_count_for_record(record):
+    call_count = record.get("call_count")
+    if isinstance(call_count, int) and call_count > 0:
+        return call_count
     calls = record.get("calls")
     return len(calls) if isinstance(calls, list) and calls else 1
 
@@ -805,6 +885,13 @@ def default_summary_path():
     if override:
         return Path(override).expanduser()
     return default_codex_home() / "codex-pet-limit-rings" / "turn-usage-summary.json"
+
+
+def default_ledger_path():
+    override = os.environ.get("CODEX_PET_LIMIT_RINGS_TURN_USAGE_LEDGER")
+    if override:
+        return Path(override).expanduser()
+    return default_codex_home() / "codex-pet-limit-rings" / "turn-usage-ledger.json"
 
 
 def default_settings_path():

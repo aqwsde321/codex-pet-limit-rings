@@ -2852,7 +2852,7 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
 
     private func usageSummaryRow(for summary: UsageSummary) -> NSAttributedString {
         let text = NSMutableAttributedString()
-        text.append(NSAttributedString(string: "Recent Used  ", attributes: menuMonospaceAttributes(color: .secondaryLabelColor, weight: .semibold)))
+        text.append(NSAttributedString(string: "Used  ", attributes: menuMonospaceAttributes(color: .secondaryLabelColor, weight: .semibold)))
         var appendedMetric = false
         if let today = summary.today {
             appendMenuMetric("Today ", formatTokenCount(today.effectiveTokens), color: menuUsedColor(), to: text)
