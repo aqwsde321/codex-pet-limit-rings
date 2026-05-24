@@ -3,6 +3,8 @@ import importlib.util
 import json
 import os
 import tempfile
+import time
+from contextlib import contextmanager
 from pathlib import Path
 
 
@@ -22,6 +24,27 @@ def write_jsonl(path, rows):
         for row in rows:
             handle.write(json.dumps(row, separators=(",", ":")))
             handle.write("\n")
+
+
+def write_json(path, value):
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(value, handle, separators=(",", ":"), sort_keys=True)
+        handle.write("\n")
+
+
+@contextmanager
+def patched_env(values):
+    old_values = {key: os.environ.get(key) for key in values}
+    try:
+        for key, value in values.items():
+            os.environ[key] = str(value)
+        yield
+    finally:
+        for key, value in old_values.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
 
 
 def test_reads_plan_mode_from_transcript(hook):
@@ -76,19 +99,46 @@ def test_queue_job_preserves_transcript_path(hook):
 def test_skipped_turn_updates_state(hook):
     with tempfile.TemporaryDirectory() as tmpdir:
         state_path = Path(tmpdir) / "turn-usage.json"
-        old_value = os.environ.get("CODEX_PET_LIMIT_RINGS_TURN_USAGE_STATE")
-        os.environ["CODEX_PET_LIMIT_RINGS_TURN_USAGE_STATE"] = str(state_path)
-        try:
+        ledger_path = Path(tmpdir) / "turn-usage-ledger.json"
+        summary_path = Path(tmpdir) / "turn-usage-summary.json"
+        observed_at = time.time()
+        write_json(ledger_path, {
+            "version": 1,
+            "records": [
+                {
+                    "thread_id": "thread-2",
+                    "session_id": "thread-2",
+                    "turn_id": "turn-plan",
+                    "observed_at": observed_at,
+                    "input_tokens": 1000,
+                    "cached_tokens": 200,
+                    "output_tokens": 50,
+                    "effective_tokens": 850,
+                    "call_count": 1,
+                },
+                {
+                    "thread_id": "thread-2",
+                    "session_id": "thread-2",
+                    "turn_id": "turn-normal",
+                    "observed_at": observed_at,
+                    "input_tokens": 100,
+                    "cached_tokens": 40,
+                    "output_tokens": 10,
+                    "effective_tokens": 70,
+                    "call_count": 1,
+                },
+            ],
+        })
+        with patched_env({
+            "CODEX_PET_LIMIT_RINGS_TURN_USAGE_STATE": state_path,
+            "CODEX_PET_LIMIT_RINGS_TURN_USAGE_LEDGER": ledger_path,
+            "CODEX_PET_LIMIT_RINGS_TURN_USAGE_SUMMARY": summary_path,
+        }):
             hook.append_skipped_turn({
                 "session_id": "thread-2",
                 "turn_id": "turn-plan",
                 "collaboration_mode_kind": "plan",
             })
-        finally:
-            if old_value is None:
-                os.environ.pop("CODEX_PET_LIMIT_RINGS_TURN_USAGE_STATE", None)
-            else:
-                os.environ["CODEX_PET_LIMIT_RINGS_TURN_USAGE_STATE"] = old_value
 
         with open(state_path, "r", encoding="utf-8") as handle:
             state = json.load(handle)
@@ -96,6 +146,80 @@ def test_skipped_turn_updates_state(hook):
         assert skipped_turn["thread_id"] == "thread-2"
         assert skipped_turn["turn_id"] == "turn-plan"
         assert skipped_turn["reason"] == "plan_mode"
+        with open(ledger_path, "r", encoding="utf-8") as handle:
+            ledger = json.load(handle)
+        with open(summary_path, "r", encoding="utf-8") as handle:
+            summary = json.load(handle)
+        assert [record["turn_id"] for record in ledger["records"]] == ["turn-normal"]
+        assert summary["record_count"] == 1
+        assert summary["today"]["effective_tokens"] == 70
+
+
+def test_sync_existing_skipped_turns_rewrites_ledger_and_summary(hook):
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_path = Path(tmpdir) / "turn-usage.json"
+        ledger_path = Path(tmpdir) / "turn-usage-ledger.json"
+        summary_path = Path(tmpdir) / "turn-usage-summary.json"
+        observed_at = time.time()
+        plan_record = {
+            "thread_id": "thread-4",
+            "session_id": "thread-4",
+            "turn_id": "turn-plan",
+            "observed_at": observed_at,
+            "input_tokens": 1000,
+            "cached_tokens": 200,
+            "output_tokens": 50,
+            "effective_tokens": 850,
+            "call_count": 1,
+        }
+        normal_record = {
+            "thread_id": "thread-4",
+            "session_id": "thread-4",
+            "turn_id": "turn-normal",
+            "observed_at": observed_at,
+            "input_tokens": 100,
+            "cached_tokens": 40,
+            "output_tokens": 10,
+            "effective_tokens": 70,
+            "call_count": 1,
+        }
+        skipped_turn = {
+            "thread_id": "thread-4",
+            "session_id": "thread-4",
+            "turn_id": "turn-plan",
+            "observed_at": observed_at,
+            "reason": "plan_mode",
+        }
+        write_json(state_path, {
+            "version": 1,
+            "records": [plan_record, normal_record],
+            "skipped_turns": [skipped_turn],
+        })
+        write_json(ledger_path, {
+            "version": 1,
+            "records": [plan_record, normal_record],
+        })
+
+        with patched_env({
+            "CODEX_PET_LIMIT_RINGS_TURN_USAGE_STATE": state_path,
+            "CODEX_PET_LIMIT_RINGS_TURN_USAGE_LEDGER": ledger_path,
+            "CODEX_PET_LIMIT_RINGS_TURN_USAGE_SUMMARY": summary_path,
+        }):
+            hook.sync_existing_skipped_turns()
+
+        with open(state_path, "r", encoding="utf-8") as handle:
+            state = json.load(handle)
+        with open(ledger_path, "r", encoding="utf-8") as handle:
+            ledger = json.load(handle)
+        with open(summary_path, "r", encoding="utf-8") as handle:
+            summary = json.load(handle)
+
+        assert [record["turn_id"] for record in state["records"]] == ["turn-normal"]
+        assert [record["turn_id"] for record in ledger["records"]] == ["turn-normal"]
+        assert state["skipped_turns"][0]["turn_id"] == "turn-plan"
+        assert summary["record_count"] == 1
+        assert summary["today"]["effective_tokens"] == 70
+        assert summary["latest_session"]["effective_tokens"] == 70
 
 
 def test_prune_skipped_turns_ignores_malformed_rows(hook):
@@ -115,6 +239,7 @@ def main():
     test_turn_mode_uses_explicit_transcript_path(hook)
     test_queue_job_preserves_transcript_path(hook)
     test_skipped_turn_updates_state(hook)
+    test_sync_existing_skipped_turns_rewrites_ledger_and_summary(hook)
     test_prune_skipped_turns_ignores_malformed_rows(hook)
 
 

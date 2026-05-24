@@ -111,6 +111,7 @@ def worker_main() -> int:
             processing_deadline = time.monotonic() + MAX_WORKER_RUNTIME_SECONDS - 0.5
             if clear_queue_when_disabled():
                 return 0
+            sync_existing_skipped_turns()
             process_queue_until_idle(processing_deadline)
     except HookRuntimeTimeout:
         cancel_runtime_alarm()
@@ -755,6 +756,7 @@ def append_state_record(record):
             existing for existing in prune_skipped_turns(state.get("skipped_turns") or [])
             if skipped_turn_key(existing) != key
         ]
+        records = records_without_skipped_turns(records, skipped_turns)
         records.insert(0, record)
         records = sorted(records, key=lambda item: item.get("observed_at") or 0, reverse=True)[:MAX_RECORDS]
         state = {
@@ -769,6 +771,7 @@ def append_state_record(record):
             json.dump(state, tmp_file, separators=(",", ":"), sort_keys=True)
             tmp_file.write("\n")
         os.replace(tmp_path, state_path)
+        sync_ledger_with_skipped_turns(skipped_turns)
         ledger_records = update_ledger_state(record, records)
         write_summary_state(ledger_records)
 
@@ -789,10 +792,7 @@ def append_skipped_turn(payload):
             records = []
 
         key = skipped_turn_key(skipped_turn)
-        records = [
-            existing for existing in records
-            if skipped_turn_key(existing) != key
-        ]
+        records = records_without_skipped_turns(records, [skipped_turn])
         skipped_turns = [
             existing for existing in prune_skipped_turns(state.get("skipped_turns") or [])
             if skipped_turn_key(existing) != key
@@ -810,6 +810,7 @@ def append_skipped_turn(payload):
             json.dump(state, tmp_file, separators=(",", ":"), sort_keys=True)
             tmp_file.write("\n")
         os.replace(tmp_path, state_path)
+        sync_ledger_with_skipped_turns(skipped_turns)
 
 
 def compact_skipped_turn(payload):
@@ -853,7 +854,90 @@ def prune_skipped_turns(skipped_turns):
     return pruned
 
 
+def sync_existing_skipped_turns():
+    state_path = default_state_path()
+    if not state_path.exists():
+        return
+
+    ensure_private_dir(state_path.parent)
+    lock_path = state_path.with_suffix(".lock")
+    with open_private_text(lock_path, os.O_RDWR | os.O_CREAT | os.O_APPEND, "a+") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        state = read_state(state_path)
+        skipped_turns = prune_skipped_turns(state.get("skipped_turns") or [])
+        if not skipped_turns:
+            return
+
+        records = records_without_skipped_turns(state.get("records") or [], skipped_turns)
+        state = {
+            "version": 1,
+            "updated_at": time.time(),
+            "records": records,
+            "skipped_turns": skipped_turns,
+        }
+        write_json_state(state_path, state)
+        sync_ledger_with_skipped_turns(skipped_turns)
+
+
+def records_without_skipped_turns(records, skipped_turns):
+    if not isinstance(records, list):
+        return []
+
+    candidates = [record for record in records if isinstance(record, dict)]
+    skipped_keys = turn_keys_for_records(skipped_turns, skipped_turn_key)
+    if not skipped_keys:
+        return candidates
+
+    return [
+        record for record in candidates
+        if skipped_turn_key(record) not in skipped_keys
+    ]
+
+
+def sync_ledger_with_skipped_turns(skipped_turns):
+    skipped_keys = turn_keys_for_records(skipped_turns, skipped_turn_key)
+    if not skipped_keys:
+        return []
+
+    ledger_path = default_ledger_path()
+    if not ledger_path.exists():
+        return []
+
+    ensure_private_dir(ledger_path.parent)
+    ledger_state = read_state(ledger_path)
+    ledger_records = ledger_state.get("records") or []
+    if not isinstance(ledger_records, list):
+        ledger_records = []
+
+    ledger_records = [
+        record for record in ledger_records
+        if ledger_key(record) not in skipped_keys
+    ]
+    ledger_records = prune_ledger_records(ledger_records)
+    state = {
+        "version": 1,
+        "updated_at": time.time(),
+        "max_age_seconds": MAX_LEDGER_AGE_SECONDS,
+        "max_records": MAX_LEDGER_RECORDS,
+        "records": ledger_records,
+    }
+    write_json_state(ledger_path, state)
+    write_summary_state(ledger_records)
+    return ledger_records
+
+
+def turn_keys_for_records(records, key_func):
+    keys = set()
+    for record in records:
+        key = key_func(record)
+        if key[0] and key[1]:
+            keys.add(key)
+    return keys
+
+
 def skipped_turn_key(record):
+    if not isinstance(record, dict):
+        return (None, None)
     return (
         record.get("thread_id") or record.get("session_id"),
         record.get("turn_id"),
@@ -913,7 +997,8 @@ def prune_ledger_records(records):
     cutoff = time.time() - MAX_LEDGER_AGE_SECONDS
     deduped = []
     seen_keys = set()
-    for record in sorted(records, key=lambda item: item.get("observed_at") or 0, reverse=True):
+    candidates = [record for record in records if isinstance(record, dict)]
+    for record in sorted(candidates, key=lambda item: item.get("observed_at") or 0, reverse=True):
         observed_at = record.get("observed_at")
         if isinstance(observed_at, (int, float)) and float(observed_at) < cutoff:
             continue
@@ -928,6 +1013,8 @@ def prune_ledger_records(records):
 
 
 def ledger_key(record):
+    if not isinstance(record, dict):
+        return (None, None)
     return (
         record.get("thread_id") or record.get("session_id"),
         record.get("turn_id"),
@@ -1016,6 +1103,14 @@ def read_state(state_path):
             return state if isinstance(state, dict) else {}
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         return {}
+
+
+def write_json_state(path, state):
+    tmp_path = path.with_suffix(".json.tmp")
+    with open_private_text(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, "w") as tmp_file:
+        json.dump(state, tmp_file, separators=(",", ":"), sort_keys=True)
+        tmp_file.write("\n")
+    os.replace(tmp_path, path)
 
 
 def parse_delimited_value(text, marker):
