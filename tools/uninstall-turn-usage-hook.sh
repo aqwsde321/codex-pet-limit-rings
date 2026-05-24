@@ -36,17 +36,40 @@ block_begin = "# Codex Pet Limit Rings turn-usage hook: begin\n"
 block_end = "# Codex Pet Limit Rings turn-usage hook: end\n"
 
 
-def remove_marked_block(text):
-    start = text.find(block_begin)
-    if start < 0:
-        return text
-    end = text.find(block_end, start)
-    if end < 0:
-        return text
-    end += len(block_end)
-    if end < len(text) and text[end] == "\n":
-        end += 1
-    return text[:start] + text[end:]
+def is_hook_marker(line):
+    stripped = line.strip()
+    return stripped == block_begin.strip() or stripped == block_end.strip()
+
+
+def is_our_hook_command(line):
+    return toml_key(line) == "command" and str(hook_script) in line
+
+
+def remove_existing_inline_stop_hooks(text):
+    lines = text.splitlines(keepends=True)
+    filtered = []
+    index = 0
+    while index < len(lines):
+        if is_hook_marker(lines[index]):
+            index += 1
+            continue
+
+        header = toml_header_name(lines[index])
+        if header == "hooks.Stop":
+            end = index + 1
+            while end < len(lines):
+                next_header = toml_header_name(lines[end])
+                if next_header is not None and next_header != "hooks.Stop.hooks":
+                    break
+                end += 1
+            if any(is_our_hook_command(line) for line in lines[index:end]):
+                index = end
+                continue
+
+        filtered.append(lines[index])
+        index += 1
+
+    return "".join(filtered)
 
 
 def read_install_state():
@@ -177,7 +200,7 @@ def cleanup_local_state():
 
 if config_path.exists():
     original = config_path.read_text(encoding="utf-8")
-    updated = restore_codex_hooks_setting(remove_marked_block(original))
+    updated = restore_codex_hooks_setting(remove_existing_inline_stop_hooks(original))
     if updated != original:
         shutil.copy2(config_path, config_path.with_name(f"{config_path.name}.bak.{timestamp}"))
         config_path.write_text(updated, encoding="utf-8")

@@ -25,15 +25,16 @@ struct LimitState {
     static let empty = LimitState(planType: nil, primary: nil, secondary: nil, additional: [], observedAt: Date(), source: "none")
 }
 
+private func goalEffectiveTokens(inputTokens: Int64, cachedTokens: Int64, outputTokens: Int64) -> Int64 {
+    max(0, inputTokens - cachedTokens) + max(0, outputTokens)
+}
+
 struct UsageCallSummary {
     var observedAt: Date
     var inputTokens: Int64
     var cachedTokens: Int64
     var outputTokens: Int64
-
-    var netTokens: Int64 {
-        max(0, inputTokens - cachedTokens) + outputTokens
-    }
+    var effectiveTokens: Int64
 }
 
 struct UsageTurnSummary {
@@ -44,11 +45,8 @@ struct UsageTurnSummary {
     var inputTokens: Int64
     var cachedTokens: Int64
     var outputTokens: Int64
+    var effectiveTokens: Int64
     var calls: [UsageCallSummary]
-
-    var netTokens: Int64 {
-        max(0, inputTokens - cachedTokens) + outputTokens
-    }
 
     var callCount: Int {
         max(calls.count, 1)
@@ -203,6 +201,7 @@ private struct HookUsageRecordPayload: Decodable {
     var input_tokens: Int64?
     var cached_tokens: Int64?
     var output_tokens: Int64?
+    var effective_tokens: Int64?
     var calls: [HookUsageCallPayload]?
 }
 
@@ -211,6 +210,7 @@ private struct HookUsageCallPayload: Decodable {
     var input_tokens: Int64?
     var cached_tokens: Int64?
     var output_tokens: Int64?
+    var effective_tokens: Int64?
 }
 
 private struct TurnUsageSettingsPayload: Encodable {
@@ -240,13 +240,15 @@ final class LimitStateReader {
         var inputTokens: Int64
         var cachedTokens: Int64
         var outputTokens: Int64
+        var effectiveTokens: Int64
 
         func callSummary() -> UsageCallSummary {
             UsageCallSummary(
                 observedAt: observedAt,
                 inputTokens: inputTokens,
                 cachedTokens: cachedTokens,
-                outputTokens: outputTokens
+                outputTokens: outputTokens,
+                effectiveTokens: effectiveTokens
             )
         }
     }
@@ -258,6 +260,7 @@ final class LimitStateReader {
         var inputTokens: Int64
         var cachedTokens: Int64
         var outputTokens: Int64
+        var effectiveTokens: Int64
         var calls: [UsageCallSummary]
 
         var canAggregateOlderSamples: Bool {
@@ -268,6 +271,7 @@ final class LimitStateReader {
             inputTokens += sample.inputTokens
             cachedTokens += sample.cachedTokens
             outputTokens += sample.outputTokens
+            effectiveTokens += sample.effectiveTokens
             calls.append(sample.callSummary())
         }
 
@@ -280,6 +284,7 @@ final class LimitStateReader {
                 inputTokens: inputTokens,
                 cachedTokens: cachedTokens,
                 outputTokens: outputTokens,
+                effectiveTokens: effectiveTokens,
                 calls: calls.sorted { $0.observedAt < $1.observedAt }
             )
         }
@@ -406,6 +411,7 @@ final class LimitStateReader {
                 inputTokens: sample.inputTokens,
                 cachedTokens: sample.cachedTokens,
                 outputTokens: sample.outputTokens,
+                effectiveTokens: sample.effectiveTokens,
                 calls: [sample.callSummary()]
             )
         }
@@ -441,8 +447,8 @@ final class LimitStateReader {
             return candidate.calls.count > existing.calls.count ? candidate : existing
         }
 
-        let existingTokens = existing.inputTokens + existing.cachedTokens + existing.outputTokens
-        let candidateTokens = candidate.inputTokens + candidate.cachedTokens + candidate.outputTokens
+        let existingTokens = existing.effectiveTokens
+        let candidateTokens = candidate.effectiveTokens
         return candidateTokens >= existingTokens ? candidate : existing
     }
 
@@ -476,6 +482,7 @@ final class LimitStateReader {
             let inputTokens = record.input_tokens ?? calls.reduce(Int64(0)) { $0 + $1.inputTokens }
             let cachedTokens = record.cached_tokens ?? calls.reduce(Int64(0)) { $0 + $1.cachedTokens }
             let outputTokens = record.output_tokens ?? calls.reduce(Int64(0)) { $0 + $1.outputTokens }
+            let effectiveTokens = record.effective_tokens ?? calls.reduce(Int64(0)) { $0 + $1.effectiveTokens }
             turns.append(UsageTurnSummary(
                 threadID: threadID,
                 turnID: record.turn_id,
@@ -484,6 +491,7 @@ final class LimitStateReader {
                 inputTokens: inputTokens,
                 cachedTokens: cachedTokens,
                 outputTokens: outputTokens,
+                effectiveTokens: effectiveTokens,
                 calls: calls
             ))
 
@@ -504,7 +512,12 @@ final class LimitStateReader {
                 observedAt: Date(timeIntervalSince1970: call.observed_at ?? observedAt.timeIntervalSince1970),
                 inputTokens: inputTokens,
                 cachedTokens: call.cached_tokens ?? 0,
-                outputTokens: outputTokens
+                outputTokens: outputTokens,
+                effectiveTokens: call.effective_tokens ?? goalEffectiveTokens(
+                    inputTokens: inputTokens,
+                    cachedTokens: call.cached_tokens ?? 0,
+                    outputTokens: outputTokens
+                )
             )
         } ?? []
 
@@ -516,7 +529,12 @@ final class LimitStateReader {
             observedAt: observedAt,
             inputTokens: record.input_tokens ?? 0,
             cachedTokens: record.cached_tokens ?? 0,
-            outputTokens: record.output_tokens ?? 0
+            outputTokens: record.output_tokens ?? 0,
+            effectiveTokens: record.effective_tokens ?? goalEffectiveTokens(
+                inputTokens: record.input_tokens ?? 0,
+                cachedTokens: record.cached_tokens ?? 0,
+                outputTokens: record.output_tokens ?? 0
+            )
         )]
     }
 
@@ -595,6 +613,7 @@ final class LimitStateReader {
             return nil
         }
 
+        let cachedTokens = usage.input_tokens_details?.cached_tokens ?? 0
         return UsageSample(
             threadID: threadID,
             turnID: parseDelimitedValue(after: "turn_id=", in: body)
@@ -602,8 +621,9 @@ final class LimitStateReader {
                 ?? parseDelimitedValue(after: "submission.id=", in: body),
             observedAt: observedAt,
             inputTokens: inputTokens,
-            cachedTokens: usage.input_tokens_details?.cached_tokens ?? 0,
-            outputTokens: outputTokens
+            cachedTokens: cachedTokens,
+            outputTokens: outputTokens,
+            effectiveTokens: goalEffectiveTokens(inputTokens: inputTokens, cachedTokens: cachedTokens, outputTokens: outputTokens)
         )
     }
 
@@ -1192,9 +1212,9 @@ struct LimitRingRenderer {
     private func usageToastCardRows(for turn: UsageTurnSummary) -> [NSAttributedString] {
         let text = NSMutableAttributedString(string: "")
         text.append(NSAttributedString(string: "\(shortUsageID(for: turn)) ", attributes: toastDetailAttributes()))
-        text.append(NSAttributedString(string: "\(turn.callCount)c", attributes: toastMetricAttributes(color: toastNetColor(), size: 9.0)))
+        text.append(NSAttributedString(string: "\(turn.callCount)c", attributes: toastMetricAttributes(color: toastUsedColor(), size: 9.0)))
         text.append(NSAttributedString(string: "  ", attributes: toastDetailAttributes()))
-        appendUsageMetric("N", formatTokenCount(turn.netTokens), color: toastNetColor(), size: 9.0, to: text)
+        appendUsageMetric("Used ", formatTokenCount(turn.effectiveTokens), color: toastUsedColor(), size: 9.0, to: text)
 
         let detail = NSMutableAttributedString(string: "")
         appendUsageMetric("I", formatTokenCount(turn.inputTokens), color: toastInputColor(), to: detail)
@@ -1391,7 +1411,7 @@ struct LimitRingRenderer {
         ]
     }
 
-    private func toastNetColor() -> NSColor {
+    private func toastUsedColor() -> NSColor {
         NSColor(calibratedRed: 0.24, green: 0.92, blue: 0.74, alpha: 0.96)
     }
 
@@ -2068,7 +2088,8 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
             String(turn.callCount),
             String(turn.inputTokens),
             String(turn.cachedTokens),
-            String(turn.outputTokens)
+            String(turn.outputTokens),
+            String(turn.effectiveTokens)
         ].joined(separator: "|")
     }
 
@@ -2735,9 +2756,9 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
         let text = NSMutableAttributedString()
         text.append(NSAttributedString(string: menuUsageID(for: turn), attributes: menuMonospaceAttributes(color: .secondaryLabelColor, weight: .semibold)))
         text.append(NSAttributedString(string: "  ", attributes: menuMonospaceAttributes(color: .secondaryLabelColor)))
-        text.append(NSAttributedString(string: "\(turn.callCount)c", attributes: menuMonospaceAttributes(color: menuNetColor(), weight: .semibold)))
+        text.append(NSAttributedString(string: "\(turn.callCount)c", attributes: menuMonospaceAttributes(color: menuUsedColor(), weight: .semibold)))
         text.append(NSAttributedString(string: "  ", attributes: menuMonospaceAttributes(color: .secondaryLabelColor)))
-        appendMenuMetric("N", formatTokenCount(turn.netTokens), color: menuNetColor(), to: text)
+        appendMenuMetric("Used ", formatTokenCount(turn.effectiveTokens), color: menuUsedColor(), to: text)
         text.append(NSAttributedString(string: "  ", attributes: menuMonospaceAttributes(color: .secondaryLabelColor)))
         appendMenuMetric("I", formatTokenCount(turn.inputTokens), color: menuInputColor(), to: text)
         text.append(NSAttributedString(string: "  ", attributes: menuMonospaceAttributes(color: .secondaryLabelColor)))
@@ -2779,7 +2800,7 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
         ]
     }
 
-    private func menuNetColor() -> NSColor {
+    private func menuUsedColor() -> NSColor {
         NSColor(calibratedRed: 0.00, green: 0.62, blue: 0.52, alpha: 1.0)
     }
 

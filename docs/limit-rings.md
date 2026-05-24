@@ -36,7 +36,7 @@ The app reads local Codex files only:
 - `~/.codex/logs_2.sqlite`: usage source using the newest websocket `codex.rate_limits` event and recent response `usage` token counters from `target = 'codex_api::endpoint::responses_websocket'`.
 - `~/.codex/codex-pet-limit-rings/settings.json`: app-written `Track Turn Usage` setting used by the optional hook to no-op when tracking is off.
 - `~/.codex/codex-pet-limit-rings/turn-usage-queue.jsonl`: optional bounded local queue used by the `Stop` hook worker, containing ids, enqueue timestamps, and retry counters.
-- `~/.codex/codex-pet-limit-rings/turn-usage.json`: optional finalized turn-usage records written by the opt-in `Stop` hook, containing ids, timestamps, call counts, and token counters.
+- `~/.codex/codex-pet-limit-rings/turn-usage.json`: optional finalized turn-usage records written by the opt-in `Stop` hook, containing ids, timestamps, call counts, raw token counters, and goal-style `effective_tokens`.
 - `~/.codex/codex-pet-limit-rings/turn-usage-hook.log`: optional bounded hook diagnostic log with hook status, timestamps, ids, and call counts.
 
 The app watches `~/.codex/.codex-global-state.json` with a macOS file event source, so pet open/close and position writes trigger an immediate frame update. A slow frame timer remains as a fallback in case the file is replaced or an event is missed.
@@ -54,11 +54,11 @@ Use `--no-mouse-monitor` to disable global mouse event monitoring; this disables
 - Ring style uses the same color model and is drawn around the pet with fixed lower translucent readouts.
 - When `Track Turn Usage` is enabled, menu token details are grouped by recent `thread_id + turn_id` groups, with reusable `W0` through `W9` labels assigned per `thread_id`.
 - When the optional `Stop` hook is installed, turn-usage rows are merged from the hook-written state file and recent local response `usage` rows in SQLite; duplicate turns keep the record with more observed calls or token counters.
-- When `Track Turn Usage` is enabled, the usage toast shows the latest net, input, cached, and output token counters for a few seconds.
+- When `Track Turn Usage` is enabled, the usage toast shows the latest goal-style used, input, cached, and output token counters for a few seconds.
 - The overlay is drawn with no panel background, so only the bars/rings and text are visible.
 - Menu-driven display style, bar position offsets, and bar-width presets are saved in `UserDefaults`.
 
-See `docs/recent-usage.md` for the token-counter menu semantics, including `Net`, `In`, `Cached`, `Out`, window-slot labels, turn grouping, and limit-delta caveats.
+See `docs/recent-usage.md` for the token-counter menu semantics, including `Used`, `In`, `Cached`, `Out`, window-slot labels, turn grouping, and limit-delta caveats.
 
 ## Install Contract
 

@@ -490,6 +490,7 @@ def build_usage_record(payload, should_continue=None):
     input_tokens = sum(row["input_tokens"] for row in rows)
     cached_tokens = sum(row["cached_tokens"] for row in rows)
     output_tokens = sum(row["output_tokens"] for row in rows)
+    effective_tokens = effective_token_count(input_tokens, cached_tokens, output_tokens)
     observed_at = max(row["observed_at"] for row in rows)
     return {
         "thread_id": thread_id,
@@ -499,8 +500,13 @@ def build_usage_record(payload, should_continue=None):
         "input_tokens": input_tokens,
         "cached_tokens": cached_tokens,
         "output_tokens": output_tokens,
+        "effective_tokens": effective_tokens,
         "calls": rows,
     }
+
+
+def effective_token_count(input_tokens, cached_tokens, output_tokens):
+    return max(0, input_tokens - cached_tokens) + max(0, output_tokens)
 
 
 def payload_identity_candidates(payload):
@@ -559,12 +565,16 @@ def read_usage_rows(identity_candidates, turn_id):
                 continue
 
             observed_at = float(ts) + (float(ts_nanos) / 1_000_000_000.0)
+            cached_tokens = int((usage.get("input_tokens_details") or {}).get("cached_tokens") or 0)
+            input_tokens = int(input_tokens)
+            output_tokens = int(output_tokens)
             rows.append({
                 "thread_id": row_thread_id,
                 "observed_at": observed_at,
-                "input_tokens": int(input_tokens),
-                "cached_tokens": int((usage.get("input_tokens_details") or {}).get("cached_tokens") or 0),
-                "output_tokens": int(output_tokens),
+                "input_tokens": input_tokens,
+                "cached_tokens": cached_tokens,
+                "output_tokens": output_tokens,
+                "effective_tokens": effective_token_count(input_tokens, cached_tokens, output_tokens),
             })
     except sqlite3.Error:
         return []
