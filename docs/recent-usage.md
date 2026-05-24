@@ -153,13 +153,13 @@ The menu shows up to three recent turn groups:
 ```text
 Recent turns
 Used  Today 16.2k  |  Session 9.3k
-W0/a327/81d2  2c  Used 8.5k  I192k  Ca186k  O1.6k
-W1/8089/c1f4  1c  Used 7.7k  I7.7k  Ca0  O41
+W0/a327/81d2  2c  Used 8.5k
+W1/8089/c1f4  1c  Used 7.7k
 
 Limit delta  Short -0.4% | Weekly -0.1%
 ```
 
-The usage rollup is based on retained ledger records and is shown only when `turn-usage-summary.json` is available. The recent turn rows are compact and color-coded in the menu. They include a short `turn_id` suffix so repeated `W0/a327` rows can still be distinguished.
+The usage rollup is based on retained ledger records and is shown only when `turn-usage-summary.json` is available. The recent turn rows are compact and color-coded in the menu. They include a short `turn_id` suffix so repeated `W0/a327` rows can still be distinguished. Raw input, cached, output, and per-call counters are kept out of the menu and can be inspected with `tools/inspect-turn-usage.py`.
 
 The `Track Turn Usage` menu item controls this whole section. Turning it off hides these rows and stops the extra local usage-log polling.
 
@@ -169,10 +169,8 @@ The app polls recent usage state every few seconds. With the optional `Stop` hoo
 
 ```text
 W0/81d2 2c  Used 4.0k
-I258k  Ca254k  O298
 
 W1/c1f4 1c  Used 7.9k
-I7.8k  Ca0  O126
 ```
 
 The toasts are intentionally temporary. `W0` through `W9` are reusable local window slots assigned by `thread_id`; the suffix after `/` is the shortened turn id for debugging. Toast cards represent groups changed in the latest polling pass; older visible cards are not carried forward into the next toast update. The menu remains the detailed view for up to three recent groups. Old groups are ignored for toast purposes even if they remain in the menu. `2c` means two response usage calls were observed for that card's turn group.
@@ -192,6 +190,19 @@ Used = max(0, In - Cached) + Out
 ```
 
 This matches the Codex goal accounting formula for the response usage rows the app can observe locally. It should not be treated as the exact account-wide rate-limit or billing formula because the app still depends on local logs and only groups observed response events.
+
+## Inspecting Raw Counters
+
+The menu and toast intentionally show only the goal-style `Used` value. To debug why a turn has that value, inspect the local hook state:
+
+```bash
+tools/inspect-turn-usage.py --latest
+tools/inspect-turn-usage.py --turn W0/a327/81d2
+tools/inspect-turn-usage.py --latest --goal-tokens 38146
+tools/inspect-turn-usage.py --latest --json
+```
+
+The inspect tool reads `turn-usage.json` and prints the raw input, cached, output, per-call counters, and the same `Used = max(0, In - Cached) + Out` calculation. It does not update app state or read prompt text.
 
 ## Thread Grouping
 

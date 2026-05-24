@@ -1314,14 +1314,7 @@ struct LimitRingRenderer {
         text.append(NSAttributedString(string: "\(turn.callCount)c", attributes: toastMetricAttributes(color: toastUsedColor(), size: 9.0)))
         text.append(NSAttributedString(string: "  ", attributes: toastDetailAttributes()))
         appendUsageMetric("Used ", formatTokenCount(turn.effectiveTokens), color: toastUsedColor(), size: 9.0, to: text)
-
-        let detail = NSMutableAttributedString(string: "")
-        appendUsageMetric("I", formatTokenCount(turn.inputTokens), color: toastInputColor(), to: detail)
-        detail.append(NSAttributedString(string: "  ", attributes: toastDetailAttributes()))
-        appendUsageMetric("Ca", formatTokenCount(turn.cachedTokens), color: toastCachedColor(), to: detail)
-        detail.append(NSAttributedString(string: "  ", attributes: toastDetailAttributes()))
-        appendUsageMetric("O", formatTokenCount(turn.outputTokens), color: toastOutputColor(), to: detail)
-        return [text, detail]
+        return [text]
     }
 
     private func drawUsageToastCard(_ context: CGContext, rect: CGRect, rows: [NSAttributedString], sizes: [CGSize]) {
@@ -1512,18 +1505,6 @@ struct LimitRingRenderer {
 
     private func toastUsedColor() -> NSColor {
         NSColor(calibratedRed: 0.24, green: 0.92, blue: 0.74, alpha: 0.96)
-    }
-
-    private func toastInputColor() -> NSColor {
-        NSColor(calibratedRed: 0.36, green: 0.70, blue: 1.00, alpha: 0.94)
-    }
-
-    private func toastCachedColor() -> NSColor {
-        NSColor(calibratedWhite: 1.0, alpha: 0.58)
-    }
-
-    private func toastOutputColor() -> NSColor {
-        NSColor(calibratedRed: 1.00, green: 0.72, blue: 0.30, alpha: 0.94)
     }
 
 }
@@ -2877,12 +2858,6 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
         text.append(NSAttributedString(string: "\(turn.callCount)c", attributes: menuMonospaceAttributes(color: menuUsedColor(), weight: .semibold)))
         text.append(NSAttributedString(string: "  ", attributes: menuMonospaceAttributes(color: .secondaryLabelColor)))
         appendMenuMetric("Used ", formatTokenCount(turn.effectiveTokens), color: menuUsedColor(), to: text)
-        text.append(NSAttributedString(string: "  ", attributes: menuMonospaceAttributes(color: .secondaryLabelColor)))
-        appendMenuMetric("I", formatTokenCount(turn.inputTokens), color: menuInputColor(), to: text)
-        text.append(NSAttributedString(string: "  ", attributes: menuMonospaceAttributes(color: .secondaryLabelColor)))
-        appendMenuMetric("Ca", formatTokenCount(turn.cachedTokens), color: menuCachedColor(), to: text)
-        text.append(NSAttributedString(string: "  ", attributes: menuMonospaceAttributes(color: .secondaryLabelColor)))
-        appendMenuMetric("O", formatTokenCount(turn.outputTokens), color: menuOutputColor(), to: text)
         return text
     }
 
@@ -2937,18 +2912,6 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
 
     private func menuUsedColor() -> NSColor {
         NSColor(calibratedRed: 0.00, green: 0.62, blue: 0.52, alpha: 1.0)
-    }
-
-    private func menuInputColor() -> NSColor {
-        NSColor(calibratedRed: 0.10, green: 0.45, blue: 0.82, alpha: 1.0)
-    }
-
-    private func menuCachedColor() -> NSColor {
-        NSColor.secondaryLabelColor
-    }
-
-    private func menuOutputColor() -> NSColor {
-        NSColor(calibratedRed: 0.84, green: 0.46, blue: 0.00, alpha: 1.0)
     }
 
     private func formatAge(since date: Date) -> String {

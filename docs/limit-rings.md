@@ -57,11 +57,11 @@ Use `--no-mouse-monitor` to disable global mouse event monitoring; this disables
 - Ring style uses the same color model and is drawn around the pet with fixed lower translucent readouts.
 - When `Track Turn Usage` is enabled, menu token details include a bounded-ledger `Used` rollup and recent `thread_id + turn_id` groups, with reusable `W0` through `W9` labels assigned per `thread_id`.
 - When the optional `Stop` hook is installed, turn-usage rows are merged from the hook-written state file and recent local response `usage` rows in SQLite; duplicate turns keep the record with more observed calls or token counters.
-- When `Track Turn Usage` is enabled, the usage toast shows the latest goal-style used, input, cached, and output token counters for a few seconds.
+- When `Track Turn Usage` is enabled, the usage toast shows the latest goal-style `Used` token counter for a few seconds.
 - The overlay is drawn with no panel background, so only the bars/rings and text are visible.
 - Menu-driven display style, bar position offsets, and bar-width presets are saved in `UserDefaults`.
 
-See `docs/recent-usage.md` for the token-counter menu semantics, including `Used`, `In`, `Cached`, `Out`, window-slot labels, turn grouping, and limit-delta caveats.
+See `docs/recent-usage.md` for the token-counter menu semantics, raw counter inspection, window-slot labels, turn grouping, and limit-delta caveats.
 
 ## Install Contract
 
