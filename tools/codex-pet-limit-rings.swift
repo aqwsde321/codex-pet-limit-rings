@@ -3091,6 +3091,7 @@ func defaultTurnUsageSettingsPath(codexHome: URL) -> URL {
     codexHome.appendingPathComponent("codex-pet-limit-rings/settings.json")
 }
 
+// LIMIT_RINGS_MAIN_BEGIN
 guard let config = parseConfig() else {
     fputs("codex-pet-limit-rings: invalid arguments. Use --help.\n", stderr)
     exit(2)

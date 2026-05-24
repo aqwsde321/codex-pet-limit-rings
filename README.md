@@ -185,6 +185,12 @@ Validate the shell scripts:
 bash -n tools/*.sh
 ```
 
+Run the focused turn-usage reader test:
+
+```bash
+tools/test-limit-rings-usage.sh
+```
+
 ## Experiments
 
 The original exploration included a Python renderer for weather-mutated Codex pets. That work now lives under `experiments/weather-pets/` so the public repo can stay focused on limit rings while preserving the larger idea: Codex pets can become ambient interfaces for state, context, and mood.
