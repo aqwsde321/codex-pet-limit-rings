@@ -74,6 +74,7 @@ The rings read:
 
 - `~/.codex/.codex-global-state.json` for `electron-avatar-overlay-open` and `electron-avatar-overlay-bounds.mascot`.
 - `~/.codex/logs_2.sqlite` for the newest local websocket `codex.rate_limits` event and recent response `usage` token counters from `target = 'codex_api::endpoint::responses_websocket'`.
+- `~/.codex/sessions/**/rollout-*.jsonl` for the optional `Stop` hook worker to read a turn's `collaboration_mode_kind` and skip Plan mode turns like Codex goal accounting.
 - `~/.codex/codex-pet-limit-rings/settings.json` for the app-written `Track Turn Usage` setting. The optional hook should no-op when this setting is off or missing.
 - `~/.codex/codex-pet-limit-rings/turn-usage-queue.jsonl` when the optional `Stop` hook is installed. This bounded queue should contain only ids, enqueue timestamps, and retry counters, and the hook should return immediately after enqueueing.
 - `~/.codex/codex-pet-limit-rings/turn-usage.json` when the optional `Stop` hook is installed. This compact state file should contain only ids, response ids when present, timestamps, call counts, and token counters, not prompt or tool-output text.

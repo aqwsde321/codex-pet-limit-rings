@@ -214,6 +214,18 @@ def process_queue_until_idle(deadline):
         if clear_queue_when_disabled():
             return
 
+        mode_kind = turn_collaboration_mode_kind(payload)
+        if mode_kind:
+            payload["collaboration_mode_kind"] = mode_kind
+        if is_plan_mode_turn(payload):
+            with lifecycle_lock():
+                if not turn_usage_enabled():
+                    clear_queue()
+                    return
+                remove_queue_job(job)
+                log_status("skipped_plan_mode", payload)
+            continue
+
         record = build_usage_record(payload, turn_usage_enabled)
         if clear_queue_when_disabled():
             return
@@ -421,7 +433,7 @@ def queue_job_key(job):
 
 def queue_job_payload(job):
     payload = {}
-    for key in ("session_id", "thread_id", "conversation_id", "turn_id"):
+    for key in ("session_id", "thread_id", "conversation_id", "turn_id", "collaboration_mode_kind"):
         value = job.get(key)
         if value:
             payload[key] = value
@@ -626,6 +638,89 @@ def filter_identity_rows(rows, identity_candidates):
         return [row for row in rows if row.get("thread_id") == only_thread_id]
 
     return []
+
+
+def turn_collaboration_mode_kind(payload):
+    turn_id = payload.get("turn_id")
+    if not isinstance(turn_id, str) or not turn_id:
+        return None
+
+    for path in transcript_path_candidates(payload):
+        mode_kind = read_turn_collaboration_mode_kind(path, turn_id)
+        if mode_kind:
+            return mode_kind
+    return None
+
+
+def transcript_path_candidates(payload):
+    candidates = []
+    explicit_path = payload.get("transcript_path")
+    if isinstance(explicit_path, str) and explicit_path:
+        candidates.append(Path(explicit_path).expanduser())
+
+    for key in ("session_id", "thread_id"):
+        value = payload.get(key)
+        if not isinstance(value, str) or not value:
+            continue
+        candidates.extend(session_transcript_paths(value))
+
+    seen = set()
+    unique_candidates = []
+    for path in candidates:
+        path_key = str(path)
+        if path_key in seen:
+            continue
+        seen.add(path_key)
+        unique_candidates.append(path)
+    return unique_candidates
+
+
+def session_transcript_paths(session_id):
+    sessions_root = default_codex_home() / "sessions"
+    if not sessions_root.exists():
+        return []
+    try:
+        paths = list(sessions_root.rglob(f"rollout-*{session_id}.jsonl"))
+    except OSError:
+        return []
+    return sorted(paths, key=path_mtime, reverse=True)
+
+
+def path_mtime(path):
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return 0
+
+
+def read_turn_collaboration_mode_kind(path, turn_id):
+    try:
+        with open(path, "r", encoding="utf-8") as transcript:
+            for line in transcript:
+                if turn_id not in line or "collaboration_mode_kind" not in line:
+                    continue
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                payload = event.get("payload") if isinstance(event, dict) else None
+                if not isinstance(payload, dict):
+                    continue
+                if payload.get("type") not in ("task_started", "turn_started"):
+                    continue
+                if payload.get("turn_id") != turn_id:
+                    continue
+                mode_kind = payload.get("collaboration_mode_kind")
+                if isinstance(mode_kind, str) and mode_kind:
+                    return mode_kind.lower()
+    except OSError:
+        return None
+    return None
+
+
+def is_plan_mode_turn(payload):
+    mode_kind = payload.get("collaboration_mode_kind")
+    return isinstance(mode_kind, str) and mode_kind.lower() == "plan"
 
 
 def usage_rows_signature(rows):
@@ -938,6 +1033,9 @@ def log_status(status, payload, calls=None):
         }
         if calls is not None:
             row["calls"] = calls
+        mode_kind = payload.get("collaboration_mode_kind")
+        if isinstance(mode_kind, str) and mode_kind:
+            row["collaboration_mode_kind"] = mode_kind
         with open_private_text(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, "a") as handle:
             handle.write(json.dumps(row, separators=(",", ":"), sort_keys=True))
             handle.write("\n")

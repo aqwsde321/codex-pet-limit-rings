@@ -34,12 +34,13 @@ The app reads local Codex files only:
 - `~/.codex/.codex-global-state.json`: current pet bounds, using `electron-avatar-overlay-bounds.mascot`.
 - `electron-avatar-overlay-open` in the same state file: whether the Codex pet is currently open.
 - `~/.codex/logs_2.sqlite`: usage source using the newest websocket `codex.rate_limits` event and recent response `usage` token counters from `target = 'codex_api::endpoint::responses_websocket'`.
+- `~/.codex/sessions/**/rollout-*.jsonl`: optional `Stop` hook worker source for `collaboration_mode_kind`, used only to skip Plan mode turns from finalized turn-usage records.
 - `~/.codex/codex-pet-limit-rings/settings.json`: app-written `Track Turn Usage` setting used by the optional hook to no-op when tracking is off.
 - `~/.codex/codex-pet-limit-rings/turn-usage-queue.jsonl`: optional bounded local queue used by the `Stop` hook worker, containing ids, enqueue timestamps, and retry counters.
 - `~/.codex/codex-pet-limit-rings/turn-usage.json`: optional finalized turn-usage records written by the opt-in `Stop` hook, containing ids, response ids when present, timestamps, call counts, raw token counters, and goal-style `effective_tokens`.
 - `~/.codex/codex-pet-limit-rings/turn-usage-ledger.json`: optional bounded per-turn ledger written by the opt-in `Stop` hook, used to avoid duplicate summary accumulation.
 - `~/.codex/codex-pet-limit-rings/turn-usage-summary.json`: optional ledger rollup written by the opt-in `Stop` hook, containing today's and the latest session's token totals.
-- `~/.codex/codex-pet-limit-rings/turn-usage-hook.log`: optional bounded hook diagnostic log with hook status, timestamps, ids, and call counts.
+- `~/.codex/codex-pet-limit-rings/turn-usage-hook.log`: optional bounded hook diagnostic log with hook status, timestamps, ids, mode kind when detected, Plan mode skip markers, and call counts.
 
 The app watches `~/.codex/.codex-global-state.json` with a macOS file event source, so pet open/close and position writes trigger an immediate frame update. A slow frame timer remains as a fallback in case the file is replaced or an event is missed.
 
