@@ -36,7 +36,7 @@ The app reads local Codex files only:
 - `~/.codex/logs_2.sqlite`: usage source using the newest websocket `codex.rate_limits` event and recent response `usage` token counters from `target = 'codex_api::endpoint::responses_websocket'`.
 - `~/.codex/codex-pet-limit-rings/settings.json`: app-written `Track Turn Usage` setting used by the optional hook to no-op when tracking is off.
 - `~/.codex/codex-pet-limit-rings/turn-usage-queue.jsonl`: optional bounded local queue used by the `Stop` hook worker, containing ids, enqueue timestamps, and retry counters.
-- `~/.codex/codex-pet-limit-rings/turn-usage.json`: optional finalized turn-usage records written by the opt-in `Stop` hook, containing ids, timestamps, call counts, raw token counters, and goal-style `effective_tokens`.
+- `~/.codex/codex-pet-limit-rings/turn-usage.json`: optional finalized turn-usage records written by the opt-in `Stop` hook, containing ids, response ids when present, timestamps, call counts, raw token counters, and goal-style `effective_tokens`.
 - `~/.codex/codex-pet-limit-rings/turn-usage-hook.log`: optional bounded hook diagnostic log with hook status, timestamps, ids, and call counts.
 
 The app watches `~/.codex/.codex-global-state.json` with a macOS file event source, so pet open/close and position writes trigger an immediate frame update. A slow frame timer remains as a fallback in case the file is replaced or an event is missed.

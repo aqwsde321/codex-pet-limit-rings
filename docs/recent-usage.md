@@ -99,7 +99,7 @@ The installer copies the hook script to:
 
 and registers an inline `[[hooks.Stop]]` entry in `~/.codex/config.toml`. It also enables `codex_hooks` in the same file. Older installer versions used `~/.codex/hooks.json`; the current installer removes this package's legacy `hooks.json` entry to avoid duplicate runs.
 
-When Codex ends a turn, the hook receives the Codex hook payload on stdin. It writes a small local queue job and returns so Codex does not wait on SQLite. A short-lived background worker then uses `turn_id` plus available local session/thread identifiers to find matching local `response.completed` usage rows in `logs_2.sqlite`, sums the calls for that turn, and writes the compact result to `turn-usage.json` with raw counters plus goal-style `effective_tokens`.
+When Codex ends a turn, the hook receives the Codex hook payload on stdin. It writes a small local queue job and returns so Codex does not wait on SQLite. A short-lived background worker then uses `turn_id` plus available local session/thread identifiers to find matching local `response.completed` usage rows in `logs_2.sqlite`, dedupes calls by `response.id` when present, sums the calls for that turn, and writes the compact result to `turn-usage.json` with raw counters plus goal-style `effective_tokens`.
 
 This adds finalized hook records to the recent-turn behavior: Codex tells the hook when a turn stops, the worker writes a compact result, and the app reads that state file. The app still polls recent SQLite rows too, then merges both sources, so fallback rows can appear before a matching hook record is written.
 
@@ -220,7 +220,7 @@ This is an account-level change. It is not attributed to a specific thread. If s
 
 - `Used` is a goal-style local calculation from observed response usage rows, not the official account-wide rate-limit formula.
 - Account-wide limit deltas can still differ from this per-turn response-usage formula.
-- A single user-visible question can trigger multiple model calls; the hook reports these as multiple calls inside the same `thread_id + turn_id` when Codex logs them that way.
+- A single user-visible question can trigger multiple model calls; the hook reports these as multiple calls inside the same `thread_id + turn_id` when Codex logs them that way, deduping repeated `response.id` values when present.
 - The app can aggregate multiple usage events inside a `turn_id`, but it does not inspect prompt text to infer semantic question boundaries.
 - `Limit delta` is account-level and can be ambiguous during simultaneous work.
 - Codex hooks are loaded by Codex sessions, so installing or uninstalling the hook requires restarting Codex sessions before behavior changes are visible.

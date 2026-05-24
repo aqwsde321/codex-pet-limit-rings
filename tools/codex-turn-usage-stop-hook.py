@@ -524,6 +524,7 @@ def read_usage_rows(identity_candidates, turn_id):
         return []
 
     rows = []
+    seen_response_ids = set()
     try:
         db = sqlite3.connect(f"file:{logs_path}?mode=ro", timeout=SQLITE_BUSY_TIMEOUT_SECONDS, uri=True)
     except sqlite3.Error:
@@ -564,18 +565,27 @@ def read_usage_rows(identity_candidates, turn_id):
             if input_tokens is None or output_tokens is None:
                 continue
 
+            response_id = response_id_for_event(event)
+            if response_id:
+                if response_id in seen_response_ids:
+                    continue
+                seen_response_ids.add(response_id)
+
             observed_at = float(ts) + (float(ts_nanos) / 1_000_000_000.0)
             cached_tokens = int((usage.get("input_tokens_details") or {}).get("cached_tokens") or 0)
             input_tokens = int(input_tokens)
             output_tokens = int(output_tokens)
-            rows.append({
+            row = {
                 "thread_id": row_thread_id,
                 "observed_at": observed_at,
                 "input_tokens": input_tokens,
                 "cached_tokens": cached_tokens,
                 "output_tokens": output_tokens,
                 "effective_tokens": effective_token_count(input_tokens, cached_tokens, output_tokens),
-            })
+            }
+            if response_id:
+                row["response_id"] = response_id
+            rows.append(row)
     except sqlite3.Error:
         return []
     finally:
@@ -583,6 +593,20 @@ def read_usage_rows(identity_candidates, turn_id):
 
     rows = filter_identity_rows(rows, identity_candidates)
     return sorted(rows, key=lambda row: row["observed_at"])
+
+
+def response_id_for_event(event):
+    response = event.get("response")
+    if isinstance(response, dict):
+        response_id = response.get("id")
+        if isinstance(response_id, str) and response_id:
+            return response_id
+
+    response_id = event.get("response_id")
+    if isinstance(response_id, str) and response_id:
+        return response_id
+
+    return None
 
 
 def filter_identity_rows(rows, identity_candidates):
@@ -606,6 +630,7 @@ def usage_rows_signature(rows):
     return tuple(
         (
             row.get("thread_id"),
+            row.get("response_id"),
             row.get("observed_at"),
             row.get("input_tokens"),
             row.get("cached_tokens"),
