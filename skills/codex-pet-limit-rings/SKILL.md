@@ -76,8 +76,8 @@ The rings read:
 - `~/.codex/logs_2.sqlite` for the newest local websocket `codex.rate_limits` event and recent response `usage` token counters from `target = 'codex_api::endpoint::responses_websocket'`.
 - `~/.codex/sessions/**/rollout-*.jsonl` for the optional `Stop` hook worker to read a turn's `collaboration_mode_kind` and skip Plan mode turns like Codex goal accounting.
 - `~/.codex/codex-pet-limit-rings/settings.json` for the app-written `Track Turn Usage` setting. The optional hook should no-op when this setting is off or missing.
-- `~/.codex/codex-pet-limit-rings/turn-usage-queue.jsonl` when the optional `Stop` hook is installed. This bounded queue should contain only ids, enqueue timestamps, and retry counters, and the hook should return immediately after enqueueing.
-- `~/.codex/codex-pet-limit-rings/turn-usage.json` when the optional `Stop` hook is installed. This compact state file should contain only ids, response ids when present, timestamps, call counts, and token counters, not prompt or tool-output text.
+- `~/.codex/codex-pet-limit-rings/turn-usage-queue.jsonl` when the optional `Stop` hook is installed. This bounded queue should contain only ids, the local transcript path when Codex provides one, enqueue timestamps, and retry counters, and the hook should return immediately after enqueueing.
+- `~/.codex/codex-pet-limit-rings/turn-usage.json` when the optional `Stop` hook is installed. This compact state file should contain only ids, Plan mode skip markers, response ids when present, timestamps, call counts, and token counters, not prompt or tool-output text.
 - `~/.codex/codex-pet-limit-rings/turn-usage-ledger.json` when the optional `Stop` hook is installed. This bounded ledger should contain only per-turn ids, timestamps, call counts, and token counters.
 - `~/.codex/codex-pet-limit-rings/turn-usage-summary.json` when the optional `Stop` hook is installed. This compact rollup should contain only bounded-ledger token totals for today and the latest session.
 

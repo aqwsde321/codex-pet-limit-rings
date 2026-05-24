@@ -205,6 +205,7 @@ private struct InputTokenDetailsPayload: Decodable {
 
 private struct HookUsageStatePayload: Decodable {
     var records: [HookUsageRecordPayload]?
+    var skipped_turns: [HookSkippedTurnPayload]?
 }
 
 private struct HookUsageRecordPayload: Decodable {
@@ -225,6 +226,13 @@ private struct HookUsageCallPayload: Decodable {
     var cached_tokens: Int64?
     var output_tokens: Int64?
     var effective_tokens: Int64?
+}
+
+private struct HookSkippedTurnPayload: Decodable {
+    var thread_id: String?
+    var session_id: String?
+    var turn_id: String?
+    var observed_at: Double?
 }
 
 private struct HookUsageSummaryPayload: Decodable {
@@ -349,6 +357,7 @@ final class LimitStateReader {
 
     func readUsageDetails() -> UsageDetails {
         let hookTurns = readHookUsageTurns()
+        let skippedTurnKeys = readHookSkippedTurnKeys()
         let summary = readHookUsageSummary()
         guard FileManager.default.fileExists(atPath: logsPath.path) else {
             return hookTurns.isEmpty && summary == nil ? .empty : UsageDetails(recentTurns: hookTurns, limitDelta: nil, summary: summary)
@@ -362,7 +371,7 @@ final class LimitStateReader {
         defer { sqlite3_close(db) }
 
         let limitDelta = readLimitDelta(db: db)
-        return UsageDetails(recentTurns: mergeRecentTurns(hookTurns: hookTurns, sqliteTurns: readRecentTurns(db: db)), limitDelta: limitDelta, summary: summary)
+        return UsageDetails(recentTurns: mergeRecentTurns(hookTurns: hookTurns, sqliteTurns: readRecentTurns(db: db, skippedTurnKeys: skippedTurnKeys)), limitDelta: limitDelta, summary: summary)
     }
 
     private func readLatestLog() -> LimitState {
@@ -404,7 +413,7 @@ final class LimitStateReader {
         return decodeRateLimitState(observedAt: observedAt, body: body) ?? .empty
     }
 
-    private func readRecentTurns(db: OpaquePointer) -> [UsageTurnSummary] {
+    private func readRecentTurns(db: OpaquePointer, skippedTurnKeys: Set<String>) -> [UsageTurnSummary] {
         let sql = """
         SELECT ts, ts_nanos, thread_id, feedback_log_body
         FROM logs INDEXED BY idx_logs_ts
@@ -441,6 +450,9 @@ final class LimitStateReader {
             }
 
             let turnKey = usageGroupKey(threadID: threadID, turnID: sample.turnID, observedAt: sample.observedAt)
+            if skippedTurnKeys.contains(turnKey) {
+                continue
+            }
             if var accumulator = accumulators[turnKey] {
                 if accumulator.canAggregateOlderSamples, accumulator.turnID == sample.turnID {
                     accumulator.add(sample)
@@ -549,6 +561,30 @@ final class LimitStateReader {
             }
         }
         return turns
+    }
+
+    private func readHookSkippedTurnKeys() -> Set<String> {
+        guard FileManager.default.fileExists(atPath: turnUsageStatePath.path),
+              let data = try? Data(contentsOf: turnUsageStatePath),
+              let state = try? JSONDecoder().decode(HookUsageStatePayload.self, from: data),
+              let skippedTurns = state.skipped_turns else {
+            return []
+        }
+
+        var keys = Set<String>()
+        for skippedTurn in skippedTurns {
+            let threadID = skippedTurn.thread_id ?? skippedTurn.session_id
+            guard let threadID, !threadID.isEmpty,
+                  let turnID = skippedTurn.turn_id, !turnID.isEmpty else {
+                continue
+            }
+            let observedAt = Date(timeIntervalSince1970: skippedTurn.observed_at ?? Date().timeIntervalSince1970)
+            guard Date().timeIntervalSince(observedAt) <= hookUsageStateMaxAge else {
+                continue
+            }
+            keys.insert(usageGroupKey(threadID: threadID, turnID: turnID, observedAt: observedAt))
+        }
+        return keys
     }
 
     private func readHookUsageSummary() -> UsageSummary? {

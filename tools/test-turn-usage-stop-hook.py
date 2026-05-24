@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import importlib.util
 import json
+import os
 import tempfile
 from pathlib import Path
 
@@ -61,11 +62,60 @@ def test_turn_mode_uses_explicit_transcript_path(hook):
         assert hook.turn_collaboration_mode_kind(payload) == "plan"
 
 
+def test_queue_job_preserves_transcript_path(hook):
+    job = hook.build_queue_job({
+        "session_id": "thread-1",
+        "turn_id": "turn-d",
+        "transcript_path": "/tmp/rollout-test.jsonl",
+    })
+
+    assert job["transcript_path"] == "/tmp/rollout-test.jsonl"
+    assert hook.queue_job_payload(job)["transcript_path"] == "/tmp/rollout-test.jsonl"
+
+
+def test_skipped_turn_updates_state(hook):
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_path = Path(tmpdir) / "turn-usage.json"
+        old_value = os.environ.get("CODEX_PET_LIMIT_RINGS_TURN_USAGE_STATE")
+        os.environ["CODEX_PET_LIMIT_RINGS_TURN_USAGE_STATE"] = str(state_path)
+        try:
+            hook.append_skipped_turn({
+                "session_id": "thread-2",
+                "turn_id": "turn-plan",
+                "collaboration_mode_kind": "plan",
+            })
+        finally:
+            if old_value is None:
+                os.environ.pop("CODEX_PET_LIMIT_RINGS_TURN_USAGE_STATE", None)
+            else:
+                os.environ["CODEX_PET_LIMIT_RINGS_TURN_USAGE_STATE"] = old_value
+
+        with open(state_path, "r", encoding="utf-8") as handle:
+            state = json.load(handle)
+        skipped_turn = state["skipped_turns"][0]
+        assert skipped_turn["thread_id"] == "thread-2"
+        assert skipped_turn["turn_id"] == "turn-plan"
+        assert skipped_turn["reason"] == "plan_mode"
+
+
+def test_prune_skipped_turns_ignores_malformed_rows(hook):
+    pruned = hook.prune_skipped_turns([
+        "bad-row",
+        {"thread_id": "thread-3", "turn_id": "turn-plan", "observed_at": 9_999_999_999.0},
+    ])
+
+    assert len(pruned) == 1
+    assert pruned[0]["thread_id"] == "thread-3"
+
+
 def main():
     hook = load_hook()
     test_reads_plan_mode_from_transcript(hook)
     test_detects_plan_mode_payload(hook)
     test_turn_mode_uses_explicit_transcript_path(hook)
+    test_queue_job_preserves_transcript_path(hook)
+    test_skipped_turn_updates_state(hook)
+    test_prune_skipped_turns_ignores_malformed_rows(hook)
 
 
 if __name__ == "__main__":

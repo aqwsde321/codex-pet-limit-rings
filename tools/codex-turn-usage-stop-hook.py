@@ -145,7 +145,7 @@ def build_queue_job(payload):
         "enqueued_at": time.time(),
         "attempts": 0,
     }
-    for key in ("session_id", "thread_id", "conversation_id"):
+    for key in ("session_id", "thread_id", "conversation_id", "transcript_path"):
         value = payload.get(key)
         if isinstance(value, str) and value:
             job[key] = value
@@ -222,6 +222,7 @@ def process_queue_until_idle(deadline):
                 if not turn_usage_enabled():
                     clear_queue()
                     return
+                append_skipped_turn(payload)
                 remove_queue_job(job)
                 log_status("skipped_plan_mode", payload)
             continue
@@ -381,7 +382,7 @@ def compact_queue_jobs(jobs):
 
         existing["enqueued_at"] = min(existing["enqueued_at"], normalized["enqueued_at"])
         existing["attempts"] = max(int(existing.get("attempts") or 0), int(normalized.get("attempts") or 0))
-        for key in ("session_id", "thread_id", "conversation_id", "last_attempt_at"):
+        for key in ("session_id", "thread_id", "conversation_id", "transcript_path", "last_attempt_at"):
             if not existing.get(key) and normalized.get(key):
                 existing[key] = normalized[key]
 
@@ -402,7 +403,7 @@ def normalize_queue_job(job):
         return None
 
     normalized = {"version": 1, "turn_id": turn_id}
-    for key in ("session_id", "thread_id", "conversation_id"):
+    for key in ("session_id", "thread_id", "conversation_id", "transcript_path"):
         value = job.get(key)
         if isinstance(value, str) and value:
             normalized[key] = value
@@ -433,7 +434,7 @@ def queue_job_key(job):
 
 def queue_job_payload(job):
     payload = {}
-    for key in ("session_id", "thread_id", "conversation_id", "turn_id", "collaboration_mode_kind"):
+    for key in ("session_id", "thread_id", "conversation_id", "transcript_path", "turn_id", "collaboration_mode_kind"):
         value = job.get(key)
         if value:
             payload[key] = value
@@ -750,6 +751,10 @@ def append_state_record(record):
             existing for existing in records
             if (existing.get("thread_id") or existing.get("session_id"), existing.get("turn_id")) != key
         ]
+        skipped_turns = [
+            existing for existing in prune_skipped_turns(state.get("skipped_turns") or [])
+            if skipped_turn_key(existing) != key
+        ]
         records.insert(0, record)
         records = sorted(records, key=lambda item: item.get("observed_at") or 0, reverse=True)[:MAX_RECORDS]
         state = {
@@ -757,6 +762,8 @@ def append_state_record(record):
             "updated_at": time.time(),
             "records": records,
         }
+        if skipped_turns:
+            state["skipped_turns"] = skipped_turns
         tmp_path = state_path.with_suffix(".json.tmp")
         with open_private_text(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, "w") as tmp_file:
             json.dump(state, tmp_file, separators=(",", ":"), sort_keys=True)
@@ -764,6 +771,93 @@ def append_state_record(record):
         os.replace(tmp_path, state_path)
         ledger_records = update_ledger_state(record, records)
         write_summary_state(ledger_records)
+
+
+def append_skipped_turn(payload):
+    skipped_turn = compact_skipped_turn(payload)
+    if skipped_turn is None:
+        return
+
+    state_path = default_state_path()
+    ensure_private_dir(state_path.parent)
+    lock_path = state_path.with_suffix(".lock")
+    with open_private_text(lock_path, os.O_RDWR | os.O_CREAT | os.O_APPEND, "a+") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        state = read_state(state_path)
+        records = state.get("records") or []
+        if not isinstance(records, list):
+            records = []
+
+        key = skipped_turn_key(skipped_turn)
+        records = [
+            existing for existing in records
+            if skipped_turn_key(existing) != key
+        ]
+        skipped_turns = [
+            existing for existing in prune_skipped_turns(state.get("skipped_turns") or [])
+            if skipped_turn_key(existing) != key
+        ]
+        skipped_turns.insert(0, skipped_turn)
+        skipped_turns = prune_skipped_turns(skipped_turns)
+        state = {
+            "version": 1,
+            "updated_at": time.time(),
+            "records": records,
+            "skipped_turns": skipped_turns,
+        }
+        tmp_path = state_path.with_suffix(".json.tmp")
+        with open_private_text(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, "w") as tmp_file:
+            json.dump(state, tmp_file, separators=(",", ":"), sort_keys=True)
+            tmp_file.write("\n")
+        os.replace(tmp_path, state_path)
+
+
+def compact_skipped_turn(payload):
+    turn_id = payload.get("turn_id")
+    thread_id = payload.get("thread_id") or payload.get("session_id")
+    if not isinstance(turn_id, str) or not turn_id:
+        return None
+    if not isinstance(thread_id, str) or not thread_id:
+        return None
+
+    skipped_turn = {
+        "thread_id": thread_id,
+        "turn_id": turn_id,
+        "observed_at": time.time(),
+        "reason": "plan_mode",
+    }
+    session_id = payload.get("session_id")
+    if isinstance(session_id, str) and session_id:
+        skipped_turn["session_id"] = session_id
+    return skipped_turn
+
+
+def prune_skipped_turns(skipped_turns):
+    if not isinstance(skipped_turns, list):
+        return []
+    cutoff = time.time() - MAX_LEDGER_AGE_SECONDS
+    pruned = []
+    seen_keys = set()
+    candidates = [skipped_turn for skipped_turn in skipped_turns if isinstance(skipped_turn, dict)]
+    for skipped_turn in sorted(candidates, key=lambda item: item.get("observed_at") or 0, reverse=True):
+        observed_at = skipped_turn.get("observed_at")
+        if isinstance(observed_at, (int, float)) and float(observed_at) < cutoff:
+            continue
+        key = skipped_turn_key(skipped_turn)
+        if not key[0] or not key[1] or key in seen_keys:
+            continue
+        seen_keys.add(key)
+        pruned.append(skipped_turn)
+        if len(pruned) >= MAX_RECORDS:
+            break
+    return pruned
+
+
+def skipped_turn_key(record):
+    return (
+        record.get("thread_id") or record.get("session_id"),
+        record.get("turn_id"),
+    )
 
 
 def update_ledger_state(record, seed_records):
