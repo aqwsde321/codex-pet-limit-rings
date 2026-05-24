@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import fcntl
+import glob
 import json
 import os
 import signal
@@ -29,6 +30,8 @@ QUEUE_RETRY_DELAY_SECONDS = 2.0
 MAX_QUEUE_JOB_AGE_SECONDS = 10 * 60
 MAX_QUEUE_JOBS = 200
 MAX_QUEUE_BYTES = 256 * 1024
+MAX_TRANSCRIPT_CANDIDATES = 8
+MAX_TRANSCRIPT_AGE_SECONDS = MAX_LEDGER_AGE_SECONDS
 WORKER_ENV = "CODEX_PET_LIMIT_RINGS_WORKER"
 
 
@@ -655,37 +658,63 @@ def turn_collaboration_mode_kind(payload):
 
 
 def transcript_path_candidates(payload):
-    candidates = []
+    seen = set()
     explicit_path = payload.get("transcript_path")
     if isinstance(explicit_path, str) and explicit_path:
-        candidates.append(Path(explicit_path).expanduser())
+        path = Path(explicit_path).expanduser()
+        seen.add(str(path))
+        yield path
 
     for key in ("session_id", "thread_id"):
         value = payload.get(key)
         if not isinstance(value, str) or not value:
             continue
-        candidates.extend(session_transcript_paths(value))
-
-    seen = set()
-    unique_candidates = []
-    for path in candidates:
-        path_key = str(path)
-        if path_key in seen:
-            continue
-        seen.add(path_key)
-        unique_candidates.append(path)
-    return unique_candidates
+        for path in session_transcript_paths(value):
+            path_key = str(path)
+            if path_key in seen:
+                continue
+            seen.add(path_key)
+            yield path
 
 
 def session_transcript_paths(session_id):
+    if not isinstance(session_id, str) or not session_id:
+        return []
+
     sessions_root = default_codex_home() / "sessions"
     if not sessions_root.exists():
         return []
-    try:
-        paths = list(sessions_root.rglob(f"rollout-*{session_id}.jsonl"))
-    except OSError:
-        return []
-    return sorted(paths, key=path_mtime, reverse=True)
+    cutoff = time.time() - MAX_TRANSCRIPT_AGE_SECONDS
+    pattern = f"rollout-*{glob.escape(session_id)}.jsonl"
+    candidates = []
+    for day_dir in recent_session_day_dirs(sessions_root):
+        try:
+            paths = list(day_dir.glob(pattern))
+        except OSError:
+            continue
+        for path in paths:
+            mtime = path_mtime(path)
+            if mtime < cutoff:
+                continue
+            candidates.append((mtime, path))
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    return [path for _, path in candidates[:MAX_TRANSCRIPT_CANDIDATES]]
+
+
+def recent_session_day_dirs(sessions_root):
+    now = time.time()
+    day_count = max(1, int(MAX_TRANSCRIPT_AGE_SECONDS // (24 * 60 * 60)) + 1)
+    day_dirs = []
+    seen = set()
+    for day_offset in range(day_count):
+        day = time.localtime(now - (day_offset * 24 * 60 * 60))
+        path = sessions_root / time.strftime("%Y/%m/%d", day)
+        path_key = str(path)
+        if path_key in seen or not path.is_dir():
+            continue
+        seen.add(path_key)
+        day_dirs.append(path)
+    return day_dirs
 
 
 def path_mtime(path):

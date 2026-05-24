@@ -32,6 +32,10 @@ def write_json(path, value):
         handle.write("\n")
 
 
+def transcript_day_dir(codex_home, timestamp):
+    return Path(codex_home) / "sessions" / time.strftime("%Y/%m/%d", time.localtime(timestamp))
+
+
 @contextmanager
 def patched_env(values):
     old_values = {key: os.environ.get(key) for key in values}
@@ -82,7 +86,42 @@ def test_turn_mode_uses_explicit_transcript_path(hook):
         )
 
         payload = {"turn_id": "turn-c", "transcript_path": str(transcript_path)}
-        assert hook.turn_collaboration_mode_kind(payload) == "plan"
+        original = hook.session_transcript_paths
+        def fail_session_scan(session_id):
+            raise AssertionError("unexpected session scan")
+        hook.session_transcript_paths = fail_session_scan
+        try:
+            assert hook.turn_collaboration_mode_kind(payload) == "plan"
+        finally:
+            hook.session_transcript_paths = original
+
+
+def test_session_transcript_paths_limits_recent_candidates(hook):
+    with tempfile.TemporaryDirectory() as tmpdir:
+        session_id = "019e57af-test-session"
+        now = time.time()
+        day_dir = transcript_day_dir(tmpdir, now)
+        day_dir.mkdir(parents=True)
+
+        expected_paths = []
+        for index in range(hook.MAX_TRANSCRIPT_CANDIDATES + 3):
+            path = day_dir / f"rollout-2026-05-24T00-00-{index:02d}-{session_id}.jsonl"
+            write_jsonl(path, [])
+            mtime = now - index
+            os.utime(path, (mtime, mtime))
+            if index < hook.MAX_TRANSCRIPT_CANDIDATES:
+                expected_paths.append(path)
+
+        stale_path = day_dir / f"rollout-2026-05-24T00-01-00-{session_id}.jsonl"
+        write_jsonl(stale_path, [])
+        stale_mtime = now - hook.MAX_TRANSCRIPT_AGE_SECONDS - 60
+        os.utime(stale_path, (stale_mtime, stale_mtime))
+
+        with patched_env({"CODEX_HOME": tmpdir}):
+            paths = hook.session_transcript_paths(session_id)
+
+        assert paths == expected_paths
+        assert stale_path not in paths
 
 
 def test_queue_job_preserves_transcript_path(hook):
@@ -237,6 +276,7 @@ def main():
     test_reads_plan_mode_from_transcript(hook)
     test_detects_plan_mode_payload(hook)
     test_turn_mode_uses_explicit_transcript_path(hook)
+    test_session_transcript_paths_limits_recent_candidates(hook)
     test_queue_job_preserves_transcript_path(hook)
     test_skipped_turn_updates_state(hook)
     test_sync_existing_skipped_turns_rewrites_ledger_and_summary(hook)
