@@ -152,14 +152,14 @@ The menu shows up to three recent turn groups:
 
 ```text
 Recent turns
-Used  Today 16.2k  |  Session 9.3k
+Used  Today 16.2k  |  This chat 9.3k
 W0/a327/81d2  2c  Used 8.5k
 W1/8089/c1f4  1c  Used 7.7k
 
 Limit delta  Short -0.4% | Weekly -0.1%
 ```
 
-The usage rollup is based on retained ledger records and is shown only when `turn-usage-summary.json` is available. The recent turn rows are compact and color-coded in the menu. They include a short `turn_id` suffix so repeated `W0/a327` rows can still be distinguished. Raw input, cached, output, and per-call counters are kept out of the menu and can be inspected with `tools/inspect-turn-usage.py`.
+The usage rollup is based on retained ledger records and is shown only when `turn-usage-summary.json` is available. `Today` is the local-day total, while `This chat` is the total for the latest recorded session. The recent turn rows are compact and color-coded in the menu. They include a short `turn_id` suffix so repeated `W0/a327` rows can still be distinguished. Raw input, cached, output, and per-call counters are kept out of the menu and can be inspected with `tools/inspect-turn-usage.py`.
 
 The `Track Turn Usage` menu item controls this whole section. Turning it off hides these rows and stops the extra local usage-log polling.
 
@@ -174,6 +174,8 @@ W1/c1f4 1c  Used 7.9k
 ```
 
 The toasts are intentionally temporary. `W0` through `W9` are reusable local window slots assigned by `thread_id`; the suffix after `/` is the shortened turn id for debugging. Toast cards represent groups changed in the latest polling pass; older visible cards are not carried forward into the next toast update. The menu remains the detailed view for up to three recent groups. Old groups are ignored for toast purposes even if they remain in the menu. `2c` means two response usage calls were observed for that card's turn group.
+
+The `Show Usage Toasts` menu item controls only these temporary cards. Turning it off keeps turn usage tracking and the menu rows active, but clears any visible toast and suppresses future toast cards until it is turned on again.
 
 ## Token Fields
 

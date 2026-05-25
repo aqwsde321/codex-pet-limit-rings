@@ -107,6 +107,7 @@ private let barsOffsetYDefaultsKey = "CodexPetLimitRings.barsOffsetY"
 private let barWidthPresetDefaultsKey = "CodexPetLimitRings.barWidthPreset"
 private let displayStyleDefaultsKey = "CodexPetLimitRings.displayStyle"
 private let turnUsageEnabledDefaultsKey = "CodexPetLimitRings.turnUsageEnabled"
+private let usageToastEnabledDefaultsKey = "CodexPetLimitRings.usageToastEnabled"
 private let threadWindowSlotsDefaultsKey = "CodexPetLimitRings.threadWindowSlots"
 private let threadWindowSlotCount = 10
 private let usageBarPositionStep: CGFloat = 4.0
@@ -1551,6 +1552,7 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
     private var limitDeltaSeparatorItem: NSMenuItem?
     private var limitDeltaItem: NSMenuItem?
     private var turnUsageItem: NSMenuItem?
+    private var usageToastItem: NSMenuItem?
     private var showRingsItem: NSMenuItem?
     private var displayStyleItems: [NSMenuItem] = []
     private var barControlsSeparatorItem: NSMenuItem?
@@ -1584,6 +1586,7 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
     private var usageBarOffset: CGSize
     private var barWidthPreset: UsageBarWidthPreset
     private var turnUsageEnabled: Bool
+    private var usageToastEnabled: Bool
     private var usageDetails: UsageDetails = .empty
     private var stateReadInFlight = false
     private var usageReadInFlight = false
@@ -1602,6 +1605,7 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
         self.ringView = LimitRingView(frame: CGRect(origin: .zero, size: CGSize(width: config.fallbackSize, height: config.fallbackSize)))
         self.ringsVisible = UserDefaults.standard.object(forKey: ringsVisibleDefaultsKey) as? Bool ?? true
         self.turnUsageEnabled = UserDefaults.standard.object(forKey: turnUsageEnabledDefaultsKey) as? Bool ?? false
+        self.usageToastEnabled = UserDefaults.standard.object(forKey: usageToastEnabledDefaultsKey) as? Bool ?? true
         self.displayStyle = UsageDisplayStyle(rawValue: UserDefaults.standard.string(forKey: displayStyleDefaultsKey) ?? "") ?? .rings
         self.usageBarOffset = CGSize(
             width: CGFloat(UserDefaults.standard.double(forKey: barsOffsetXDefaultsKey)),
@@ -1981,6 +1985,11 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
         menu.addItem(turnUsageItem)
         self.turnUsageItem = turnUsageItem
 
+        let usageToastItem = NSMenuItem(title: "Show Usage Toasts", action: #selector(toggleUsageToasts(_:)), keyEquivalent: "")
+        usageToastItem.target = self
+        menu.addItem(usageToastItem)
+        self.usageToastItem = usageToastItem
+
         let showItem = NSMenuItem(title: "Show Usage Overlay", action: #selector(toggleRings(_:)), keyEquivalent: "")
         showItem.target = self
         menu.addItem(showItem)
@@ -2007,6 +2016,7 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
         updateSummaryMenuItem()
         updateUsageDetailsMenuItems()
         updateTurnUsageMenuItem()
+        updateUsageToastMenuItem()
         updateShowRingsMenuItem()
         updateDisplayStyleMenuItems()
         updateBarWidthMenuItems()
@@ -2033,7 +2043,7 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
         let labeledUsageDetails = applyWindowLabels(to: usageDetails)
         self.usageDetails = labeledUsageDetails
         updateUsageDetailsMenuItems()
-        if showToast {
+        if showToast, usageToastEnabled {
             updateUsageToast(from: labeledUsageDetails)
         }
     }
@@ -2401,6 +2411,12 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
 
     private func updateTurnUsageMenuItem() {
         turnUsageItem?.state = turnUsageEnabled ? .on : .off
+        updateUsageToastMenuItem()
+    }
+
+    private func updateUsageToastMenuItem() {
+        usageToastItem?.state = usageToastEnabled ? .on : .off
+        usageToastItem?.isEnabled = turnUsageEnabled
     }
 
     private func updateShowRingsMenuItem() {
@@ -2490,6 +2506,17 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
         } else {
             clearUsageDetails()
         }
+    }
+
+    @objc private func toggleUsageToasts(_ sender: NSMenuItem) {
+        usageToastEnabled.toggle()
+        UserDefaults.standard.set(usageToastEnabled, forKey: usageToastEnabledDefaultsKey)
+        updateUsageToastMenuItem()
+        usageToastTimer?.invalidate()
+        usageToastTimer = nil
+        ringView.usageToastTurns = []
+        hasPrimedUsageToast = false
+        lastUsageToastSignatures = [:]
     }
 
     @objc private func refreshNow(_ sender: NSMenuItem) {
@@ -2873,7 +2900,7 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
             if appendedMetric {
                 text.append(NSAttributedString(string: "  |  ", attributes: menuMonospaceAttributes(color: .secondaryLabelColor)))
             }
-            appendMenuMetric("Session ", formatTokenCount(latestSession.effectiveTokens), color: menuUsedColor(), to: text)
+            appendMenuMetric("This chat ", formatTokenCount(latestSession.effectiveTokens), color: menuUsedColor(), to: text)
         }
         return text
     }
