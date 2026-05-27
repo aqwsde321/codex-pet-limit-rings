@@ -2023,7 +2023,12 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
     }
 
     func menuWillOpen(_ menu: NSMenu) {
-        refreshUsageDetailsNow()
+        updateSummaryMenuItem()
+        updateTurnUsageMenuItem()
+        updateUsageToastMenuItem()
+        updateShowRingsMenuItem()
+        updateDisplayStyleMenuItems()
+        updateBarWidthMenuItems()
         updateState(showToast: false)
     }
 
