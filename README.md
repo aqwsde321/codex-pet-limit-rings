@@ -70,7 +70,7 @@ tools/install-codex-skill.sh
 
 <img src="docs/assets/usage-menu-preview.png" alt="메뉴 막대 항목 예시" width="360">
 
-메뉴 막대 아이콘에서 오버레이 표시, 링/바 전환, 바 위치, 최근 턴 사용량, 새로고침, 종료를 제어합니다. `Track Turn Usage`는 기본 꺼짐입니다.
+메뉴 막대 아이콘에서 오버레이 표시, 링/바 전환, 바 위치, 새로고침, 종료를 제어합니다. `Track Turn Usage`를 켜면 `Recent turns`, `Used Today`, `This chat`, `Limit delta`가 함께 표시됩니다.
 
 `Track Turn Usage`와 `Show Usage Toasts`를 켜면 새 턴 사용량이 관측될 때 짧은 토스트가 뜹니다. `Used`는 `max(0, In - Cached) + Out`으로 계산한 goal 스타일 토큰 값입니다.
 
