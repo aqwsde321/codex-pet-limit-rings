@@ -284,7 +284,6 @@ struct LimitRingsConfig {
     var previewUsesSampleData: Bool = false
     var previewShowsToasts: Bool = false
     var previewUsesBackground: Bool = false
-    var previewPetImagePath: URL?
     var fallbackSize: CGFloat = 220
     var mouseMonitorEnabled: Bool = true
 }
@@ -945,15 +944,16 @@ struct LimitRingRenderer {
     var barOffset: CGSize
     var checkPulse: CGFloat
     var usageToastTurns: [UsageTurnSummary]
-    var previewPetImagePath: URL? = nil
+    var previewUsesBackground: Bool = false
 
     func draw(in rect: CGRect) {
         guard let context = NSGraphicsContext.current?.cgContext else { return }
         context.saveGState()
         context.setShouldAntialias(true)
         context.clear(rect)
-        if let previewPetImagePath {
-            drawPreviewPet(imagePath: previewPetImagePath, in: rect, displayStyle: displayStyle)
+        if previewUsesBackground {
+            context.setFillColor(NSColor(calibratedWhite: 0.07, alpha: 1.0).cgColor)
+            context.fill(rect)
         }
 
         switch displayStyle {
@@ -2987,12 +2987,6 @@ func renderPreview(config: LimitRingsConfig) -> Bool {
     let size = CGSize(width: config.fallbackSize, height: config.fallbackSize)
     let image = NSImage(size: size)
     image.lockFocus()
-    if config.previewUsesBackground {
-        NSColor(calibratedWhite: 0.07, alpha: 1.0).setFill()
-    } else {
-        NSColor.clear.setFill()
-    }
-    NSRect(origin: .zero, size: size).fill()
     LimitRingRenderer(
         state: state,
         displayStyle: config.previewStyle,
@@ -3000,7 +2994,7 @@ func renderPreview(config: LimitRingsConfig) -> Bool {
         barOffset: .zero,
         checkPulse: 0.55,
         usageToastTurns: toastTurns,
-        previewPetImagePath: config.previewPetImagePath
+        previewUsesBackground: config.previewUsesBackground
     ).draw(in: CGRect(origin: .zero, size: size))
     image.unlockFocus()
 
@@ -3019,28 +3013,6 @@ func renderPreview(config: LimitRingsConfig) -> Bool {
         fputs("codex-pet-limit-rings: could not write preview: \(error)\n", stderr)
         return false
     }
-}
-
-private func drawPreviewPet(imagePath: URL, in rect: CGRect, displayStyle: UsageDisplayStyle) {
-    guard let image = NSImage(contentsOf: imagePath) else { return }
-    let petSize: CGFloat
-    let center: CGPoint
-    switch displayStyle {
-    case .rings:
-        let ringAreaHeight = max(1.0, rect.height - usageRingTopPadding)
-        petSize = min(rect.width, ringAreaHeight) * 0.78
-        center = CGPoint(x: rect.midX, y: ringAreaHeight / 2.0)
-    case .bars:
-        petSize = min(rect.width * 0.62, rect.height * 0.62)
-        center = CGPoint(x: rect.midX, y: rect.midY + petSize * 0.22)
-    }
-    let petRect = CGRect(
-        x: center.x - petSize / 2.0,
-        y: center.y - petSize / 2.0,
-        width: petSize,
-        height: petSize
-    )
-    image.draw(in: petRect, from: .zero, operation: .sourceOver, fraction: 1.0)
 }
 
 private func samplePreviewLimitState() -> LimitState {
@@ -3099,7 +3071,7 @@ func parseConfig() -> LimitRingsConfig? {
         switch arg {
         case "--help", "-h":
             print("""
-            Usage: codex-pet-limit-rings [--preview PATH] [--preview-style rings|bars] [--preview-sample] [--preview-toasts] [--preview-background] [--preview-pet PATH] [--codex-home PATH] [--logs PATH] [--turn-usage-state PATH] [--turn-usage-summary PATH] [--state PATH] [--no-mouse-monitor]
+            Usage: codex-pet-limit-rings [--preview PATH] [--preview-style rings|bars] [--preview-sample] [--preview-toasts] [--preview-background] [--codex-home PATH] [--logs PATH] [--turn-usage-state PATH] [--turn-usage-summary PATH] [--state PATH] [--no-mouse-monitor]
 
             Draws a transparent Codex rate-limit overlay near the current pet using local Codex logs.
             """)
@@ -3121,10 +3093,6 @@ func parseConfig() -> LimitRingsConfig? {
             config.previewShowsToasts = true
         case "--preview-background":
             config.previewUsesBackground = true
-        case "--preview-pet":
-            guard let value = args.first else { return nil }
-            args.removeFirst()
-            config.previewPetImagePath = URL(fileURLWithPath: value)
         case "--codex-home":
             guard let value = args.first else { return nil }
             args.removeFirst()

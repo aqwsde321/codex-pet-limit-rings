@@ -2,11 +2,11 @@
 
 Codex 펫 주변에 사용량 한도를 링이나 바로 표시하는 macOS 보조 앱입니다. Codex 앱 번들을 수정하지 않고, 로컬 Codex 상태와 사용량 로그만 읽어 별도 투명 오버레이 창을 그립니다.
 
-앱은 펫 이미지를 교체하지 않습니다. Codex 기본 펫이나 사용자가 선택한 커스텀 펫을 그대로 쓰고, 그 주변에 사용량 표시만 얹습니다.
+앱은 펫 이미지를 교체하지 않습니다. Codex가 현재 띄운 펫을 그대로 쓰고, 그 주변에 사용량 표시만 얹습니다.
 
-![Codex 기본 펫 아래에 표시된 바 스타일 사용량 오버레이](docs/assets/usage-bars-preview.png)
+<img src="docs/assets/usage-bars-preview.png" alt="현재 Codex 펫 아래에 표시된 바 스타일 사용량 오버레이" width="360">
 
-위 이미지는 Codex 기본 펫을 합성한 문서용 예시입니다. 실제 실행 시에는 Codex가 띄운 현재 펫을 그대로 따라갑니다.
+위 이미지는 실제 실행 화면 예시입니다. 펫은 Codex가 띄운 현재 펫이고, 아래 두 줄만 이 앱이 그리는 바 스타일 오버레이입니다.
 
 ## 빠른 설치
 
@@ -52,29 +52,25 @@ tools/install-codex-skill.sh
 
 ## 이미지로 보는 UI
 
-아래 이미지는 Codex 기본 펫과 샘플 데이터를 합성한 문서용 예시입니다. 실제 퍼센트와 리셋 시간은 사용자의 로컬 Codex 로그에 따라 바뀝니다.
+아래 이미지는 실제 실행 화면 예시입니다. 퍼센트와 리셋 시간은 사용자의 로컬 Codex 로그에 따라 바뀝니다.
 
 ### 링
 
-![링 스타일 사용량 오버레이](docs/assets/usage-rings-preview.png)
+<img src="docs/assets/usage-rings-preview.png" alt="링 스타일 사용량 오버레이" width="360">
 
-새 설치의 기본 표시입니다. 가운데에는 Codex 기본 펫 또는 현재 선택한 펫이 보이고, 바깥 링은 짧은 사용량 창, 안쪽 링은 주간 한도의 남은 비율을 보여 줍니다.
+새 설치의 기본 표시입니다. 가운데에는 현재 Codex 펫이 보이고, 바깥 링은 짧은 사용량 창, 안쪽 링은 주간 한도의 남은 비율을 보여 줍니다.
 
 ### 바
 
-![바 스타일 사용량 오버레이](docs/assets/usage-bars-preview.png)
+<img src="docs/assets/usage-bars-preview.png" alt="바 스타일 사용량 오버레이" width="360">
 
 더 작게 보고 싶을 때 쓰는 표시입니다. 위쪽 바는 짧은 사용량 창, 아래쪽 바는 주간 한도입니다. `Display Style`을 `Bars`로 바꾸면 폭과 위치를 메뉴에서 조정할 수 있습니다.
 
 ### 메뉴
 
-![메뉴 막대 항목 예시](docs/assets/usage-menu-preview.png)
+<img src="docs/assets/usage-menu-preview.png" alt="메뉴 막대 항목 예시" width="360">
 
 메뉴 막대 아이콘에서 오버레이 표시, 링/바 전환, 바 위치, 최근 턴 사용량, 새로고침, 종료를 제어합니다. `Track Turn Usage`는 기본 꺼짐입니다.
-
-### 토스트
-
-![최근 턴 사용량 토스트 예시](docs/assets/usage-toast-preview.png)
 
 `Track Turn Usage`와 `Show Usage Toasts`를 켜면 새 턴 사용량이 관측될 때 짧은 토스트가 뜹니다. `Used`는 `max(0, In - Cached) + Out`으로 계산한 goal 스타일 토큰 값입니다.
 
@@ -143,14 +139,6 @@ swiftc tools/codex-pet-limit-rings.swift -o tmp/codex-pet-limit-rings -framework
 tmp/codex-pet-limit-rings --preview tmp/limit-rings-preview.png --size 164
 bash -n tools/*.sh
 tools/test-limit-rings-usage.sh
-```
-
-문서용 샘플 이미지:
-
-```bash
-tmp/codex-pet-limit-rings --preview docs/assets/usage-rings-preview.png --preview-sample --preview-style rings --preview-background --preview-pet docs/assets/codex-default-pet.png --size 260
-tmp/codex-pet-limit-rings --preview docs/assets/usage-bars-preview.png --preview-sample --preview-style bars --preview-background --preview-pet docs/assets/codex-default-pet.png --size 260
-tmp/codex-pet-limit-rings --preview docs/assets/usage-toast-preview.png --preview-sample --preview-style rings --preview-toasts --preview-background --preview-pet docs/assets/codex-default-pet.png --size 260
 ```
 
 ## 라이선스
