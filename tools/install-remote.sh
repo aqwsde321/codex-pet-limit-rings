@@ -6,6 +6,7 @@ RAW_BASE="${CODEX_PET_LIMIT_RINGS_RAW_BASE:-https://raw.githubusercontent.com/aq
 TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/codex-pet-limit-rings.XXXXXX")"
 WITH_TURN_USAGE=0
 WITH_SKILL=0
+UNINSTALL=0
 
 cleanup() {
   rm -rf "$TMP_ROOT"
@@ -14,7 +15,7 @@ trap cleanup EXIT
 
 usage() {
   cat <<'USAGE'
-Usage: install-remote.sh [--with-turn-usage] [--with-skill]
+Usage: install-remote.sh [--with-turn-usage] [--with-skill] [--uninstall]
 
 Downloads only the files needed for installation into a temporary directory.
 No git clone is required.
@@ -28,6 +29,9 @@ while [[ $# -gt 0 ]]; do
       ;;
     --with-skill)
       WITH_SKILL=1
+      ;;
+    --uninstall)
+      UNINSTALL=1
       ;;
     --help|-h)
       usage
@@ -48,6 +52,15 @@ download_file() {
   mkdir -p "$(dirname "$destination")"
   curl -fsSL "$RAW_BASE/$path" -o "$destination"
 }
+
+if [[ "$UNINSTALL" == "1" ]]; then
+  download_file "tools/uninstall-limit-rings.sh"
+  download_file "tools/uninstall-turn-usage-hook.sh"
+  chmod +x "$TMP_ROOT/tools/"*.sh
+  "$TMP_ROOT/tools/uninstall-limit-rings.sh"
+  "$TMP_ROOT/tools/uninstall-turn-usage-hook.sh"
+  exit 0
+fi
 
 download_file "tools/CodexPetLimitRings-Info.plist"
 download_file "tools/build-limit-rings.sh"

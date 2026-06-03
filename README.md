@@ -37,6 +37,12 @@ tools/run-limit-rings.sh
 제거:
 
 ```bash
+curl -fsSL https://raw.githubusercontent.com/aqwsde321/codex-pet-limit-rings/main/tools/install-remote.sh | bash -s -- --uninstall
+```
+
+이미 저장소를 로컬에 받은 경우:
+
+```bash
 tools/uninstall-limit-rings.sh
 tools/uninstall-turn-usage-hook.sh
 ```
