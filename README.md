@@ -10,7 +10,19 @@ Codex 펫 주변에 사용량 한도를 링이나 바로 표시하는 macOS 보�
 
 ## 빠른 설치
 
-저장소를 로컬에 받은 뒤 실행합니다. `git clone`이 가장 편하지만, GitHub ZIP을 받아도 됩니다.
+`git clone` 없이 바로 설치할 수 있습니다. 아래 명령은 필요한 설치 파일만 임시 폴더에 내려받고 설치 후 정리합니다.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/aqwsde321/codex-pet-limit-rings/main/tools/install-remote.sh | bash
+```
+
+턴 사용량 hook과 Codex skill도 같이 설치하려면:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/aqwsde321/codex-pet-limit-rings/main/tools/install-remote.sh | bash -s -- --with-turn-usage --with-skill
+```
+
+이미 저장소를 로컬에 받은 경우:
 
 ```bash
 tools/install-limit-rings.sh
@@ -117,6 +129,7 @@ CODEX_PET_LIMIT_RINGS_NO_MOUSE_MONITOR=1 tools/install-limit-rings.sh
 ```text
 tools/
   codex-pet-limit-rings.swift      macOS 보조 앱
+  install-remote.sh                clone 없는 원라인 설치
   install-limit-rings.sh           빌드/설치/로그인 항목 시작
   uninstall-limit-rings.sh         앱과 로그인 항목 제거
   install-turn-usage-hook.sh       선택 Stop hook 설치
