@@ -25,10 +25,29 @@ Use that checkout as the working directory. Read `AGENTS.md` first if it exists.
 
 ## Common Tasks
 
+When a user asks to install or set this up, recommend the smallest useful setup first:
+
+- Default recommendation: install only the overlay app.
+- Ask before installing the optional `Stop` hook. Enable it only when the user wants recent-turn usage, menu usage details, or usage toasts.
+- Ask before installing this skill into local Codex. Enable it only when the user wants to reuse this workflow from other Codex conversations.
+- If the user explicitly asks for everything, install the overlay app, optional turn-usage hook, and skill.
+
 Install or enable the usage overlay for a user:
 
 ```bash
 tools/install-limit-rings.sh
+```
+
+Install without requiring the user to clone this repository:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/aqwsde321/codex-pet-limit-rings/main/tools/install-remote.sh | bash
+```
+
+Install everything without requiring a clone:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/aqwsde321/codex-pet-limit-rings/main/tools/install-remote.sh | bash -s -- --with-turn-usage --with-skill
 ```
 
 Install the optional Codex `Stop` hook for finalized turn-usage tracking:
@@ -47,6 +66,12 @@ Uninstall:
 
 ```bash
 tools/uninstall-limit-rings.sh
+```
+
+Uninstall without requiring a clone:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/aqwsde321/codex-pet-limit-rings/main/tools/install-remote.sh | bash -s -- --uninstall
 ```
 
 Remove only the optional turn-usage hook:

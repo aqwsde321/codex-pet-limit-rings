@@ -49,10 +49,16 @@ tools/uninstall-turn-usage-hook.sh
 
 ## Codex에게 맡기기
 
-이 저장소는 Codex 에이전트가 바로 설치할 수 있게 구성되어 있습니다. Codex에게 이렇게 요청하면 됩니다.
+이 저장소는 Codex 에이전트가 바로 설치할 수 있게 구성되어 있습니다. 처음 쓰는 사용자는 기본 설치를 추천합니다.
+
+- 추천: 오버레이 앱만 설치
+- 선택: 턴별 사용량 토스트가 필요하면 `Track Turn Usage` hook까지 설치
+- 선택: 다른 Codex 대화에서도 이 작업 흐름을 재사용하려면 skill까지 설치
+
+Codex에게 이렇게 요청하면 됩니다.
 
 ```text
-Use the bundled codex-pet-limit-rings skill from this repository. Install the usage-overlay companion for my Codex pet, verify the LaunchAgent is running, and confirm the overlay stays anchored to the pet.
+Install Codex Pet Limit Rings for me. Recommend the simplest setup first, ask before enabling turn-usage tracking or installing the Codex skill, then verify the overlay is running.
 ```
 
 관련 파일:
