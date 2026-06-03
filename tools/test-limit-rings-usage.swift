@@ -22,12 +22,39 @@ enum LimitRingsUsageTestError: Error, CustomStringConvertible {
 struct LimitRingsUsageTests {
     static func main() {
         do {
+            try testLimitStateSkipsInvalidRateLimitRows()
             try testSQLiteFallbackSkipsPlanModeTurns()
             print("limit-rings usage tests passed")
         } catch {
             fputs("limit-rings usage tests failed: \(error)\n", stderr)
             exit(1)
         }
+    }
+
+    private static func testLimitStateSkipsInvalidRateLimitRows() throws {
+        let fileManager = FileManager.default
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("codex-limit-rings-limits-\(UUID().uuidString)", isDirectory: true)
+        try fileManager.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: root) }
+
+        let logsPath = root.appendingPathComponent("logs_2.sqlite")
+        let statePath = root.appendingPathComponent("turn-usage.json")
+        let summaryPath = root.appendingPathComponent("turn-usage-summary.json")
+        try createLogsDatabase(at: logsPath)
+
+        let now = Int64(Date().timeIntervalSince1970)
+        try insertInvalidRateLimitRow(logsPath: logsPath, ts: now + 1)
+        try insertRateLimitRow(logsPath: logsPath, ts: now, primaryUsed: 15, secondaryUsed: 26)
+
+        let state = LimitStateReader(
+            logsPath: logsPath,
+            turnUsageStatePath: statePath,
+            turnUsageSummaryPath: summaryPath
+        ).readLatest()
+
+        try expect(state.primary?.remainingPercent == 85, "expected invalid primary row to be skipped")
+        try expect(state.secondary?.remainingPercent == 74, "expected invalid secondary row to be skipped")
     }
 
     private static func testSQLiteFallbackSkipsPlanModeTurns() throws {
@@ -114,6 +141,20 @@ struct LimitRingsUsageTests {
         """)
     }
 
+    private static func insertInvalidRateLimitRow(logsPath: URL, ts: Int64) throws {
+        let body = """
+        websocket event: {"type":"codex.rate_limits","plan_type":"pro","rate_limits":{"allowed":true,"limit_reached":false,"primary":{"used_percent":0,"window_minutes":0,"reset_at":\(ts)},"secondary":null},"additional_rate_limits":{}}
+        """
+        try insertLogRow(logsPath: logsPath, ts: ts, threadID: "thread-rate", body: body)
+    }
+
+    private static func insertRateLimitRow(logsPath: URL, ts: Int64, primaryUsed: Int, secondaryUsed: Int) throws {
+        let body = """
+        websocket event: {"type":"codex.rate_limits","plan_type":"pro","rate_limits":{"allowed":true,"limit_reached":false,"primary":{"used_percent":\(primaryUsed),"window_minutes":300,"reset_at":\(ts + 3600)},"secondary":{"used_percent":\(secondaryUsed),"window_minutes":10080,"reset_at":\(ts + 604800)}},"additional_rate_limits":{}}
+        """
+        try insertLogRow(logsPath: logsPath, ts: ts, threadID: "thread-rate", body: body)
+    }
+
     private static func insertUsageRow(
         logsPath: URL,
         ts: Int64,
@@ -123,22 +164,26 @@ struct LimitRingsUsageTests {
         cachedTokens: Int64,
         outputTokens: Int64
     ) throws {
+        let body = """
+        turn_id=\(turnID) websocket event: {"type":"response.completed","usage":{"input_tokens":\(inputTokens),"input_tokens_details":{"cached_tokens":\(cachedTokens)},"output_tokens":\(outputTokens)}}
+        """
+        try insertLogRow(logsPath: logsPath, ts: ts, threadID: threadID, body: body)
+    }
+
+    private static func insertLogRow(logsPath: URL, ts: Int64, threadID: String, body: String) throws {
         var db: OpaquePointer?
         guard sqlite3_open(logsPath.path, &db) == SQLITE_OK, let db else {
             throw LimitRingsUsageTestError.sqlite("could not open sqlite database")
         }
         defer { sqlite3_close(db) }
 
-        let body = """
-        turn_id=\(turnID) websocket event: {"type":"response.completed","usage":{"input_tokens":\(inputTokens),"input_tokens_details":{"cached_tokens":\(cachedTokens)},"output_tokens":\(outputTokens)}}
-        """
         let sql = """
         INSERT INTO logs (ts, ts_nanos, thread_id, target, feedback_log_body)
         VALUES (?, 0, ?, 'codex_api::endpoint::responses_websocket', ?)
         """
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK, let statement else {
-            throw LimitRingsUsageTestError.sqlite("could not prepare usage insert")
+            throw LimitRingsUsageTestError.sqlite("could not prepare log insert")
         }
         defer { sqlite3_finalize(statement) }
 
@@ -146,7 +191,7 @@ struct LimitRingsUsageTests {
         sqlite3_bind_text(statement, 2, threadID, -1, sqliteTransient)
         sqlite3_bind_text(statement, 3, body, -1, sqliteTransient)
         guard sqlite3_step(statement) == SQLITE_DONE else {
-            throw LimitRingsUsageTestError.sqlite("could not insert usage row")
+            throw LimitRingsUsageTestError.sqlite("could not insert log row")
         }
     }
 

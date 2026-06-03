@@ -177,6 +177,9 @@ private struct BucketPayload: Decodable {
     func toBucket() -> LimitBucket? {
         guard let used = used_percent else { return nil }
         let minutes = window_minutes ?? limit_window_seconds.map { $0 / 60.0 }
+        if let minutes, minutes <= 0 {
+            return nil
+        }
         return LimitBucket(usedPercent: used, windowMinutes: minutes, resetAt: reset_at)
     }
 }
@@ -397,7 +400,7 @@ final class LimitStateReader {
         WHERE target = 'codex_api::endpoint::responses_websocket'
           AND feedback_log_body LIKE '%websocket event: {"type":"codex.rate_limits"%'
         ORDER BY ts DESC, ts_nanos DESC, id DESC
-        LIMIT 1
+        LIMIT 40
         """
 
         var statement: OpaquePointer?
@@ -406,16 +409,48 @@ final class LimitStateReader {
         }
         defer { sqlite3_finalize(statement) }
 
-        guard sqlite3_step(statement) == SQLITE_ROW,
-              let cText = sqlite3_column_text(statement, 2) else {
-            return .empty
+        var latest: LimitState?
+        while sqlite3_step(statement) == SQLITE_ROW {
+            guard let cText = sqlite3_column_text(statement, 2) else {
+                continue
+            }
+            let ts = sqlite3_column_int64(statement, 0)
+            let tsNanos = sqlite3_column_int64(statement, 1)
+            let observedAt = Date(timeIntervalSince1970: TimeInterval(ts) + TimeInterval(tsNanos) / 1_000_000_000.0)
+            let body = String(cString: cText)
+            guard let state = decodeRateLimitState(observedAt: observedAt, body: body) else {
+                continue
+            }
+            guard isDisplayableLimitState(state) else {
+                continue
+            }
+
+            guard var current = latest else {
+                if state.secondary != nil {
+                    return state
+                }
+                latest = state
+                continue
+            }
+
+            if current.secondary == nil,
+               let secondary = state.secondary,
+               current.observedAt.timeIntervalSince(state.observedAt) <= hookUsageStateMaxAge {
+                current.secondary = secondary
+                return current
+            }
         }
 
-        let ts = sqlite3_column_int64(statement, 0)
-        let tsNanos = sqlite3_column_int64(statement, 1)
-        let observedAt = Date(timeIntervalSince1970: TimeInterval(ts) + TimeInterval(tsNanos) / 1_000_000_000.0)
-        let body = String(cString: cText)
-        return decodeRateLimitState(observedAt: observedAt, body: body) ?? .empty
+        return latest ?? .empty
+    }
+
+    private func isDisplayableLimitState(_ state: LimitState) -> Bool {
+        hasDisplayableWindow(state.primary) || hasDisplayableWindow(state.secondary)
+    }
+
+    private func hasDisplayableWindow(_ bucket: LimitBucket?) -> Bool {
+        guard let bucket else { return false }
+        return (bucket.windowMinutes ?? 0.0) > 0.0
     }
 
     private func readRecentTurns(db: OpaquePointer, skippedTurnKeys: Set<String>) -> [UsageTurnSummary] {
@@ -1127,7 +1162,6 @@ struct LimitRingRenderer {
             width: panelWidth,
             height: panelHeight
         )
-
         for (index, row) in rows.enumerated() {
             let y = panelRect.maxY - verticalPadding - rowHeight - CGFloat(index) * (rowHeight + rowGap)
             drawProgressRow(context, row: row, y: y, panelRect: panelRect)
@@ -1160,8 +1194,8 @@ struct LimitRingRenderer {
         let textX = barX + barWidth + textGap
         let fillWidth = max(row.bucket.remainingPercent <= 0 ? 0 : 3.0, barWidth * CGFloat(row.bucket.remainingPercent / 100.0))
 
-        context.saveGState()
         let barRect = CGRect(x: barX, y: barY, width: barWidth, height: barHeight)
+        context.saveGState()
         drawCheckSweep(context, barRect: barRect, color: color)
         context.setFillColor(NSColor(calibratedWhite: 0.30, alpha: 0.30).cgColor)
         context.addPath(CGPath(roundedRect: barRect, cornerWidth: barHeight / 2.0, cornerHeight: barHeight / 2.0, transform: nil))
@@ -1173,10 +1207,12 @@ struct LimitRingRenderer {
         context.restoreGState()
 
         let percent = NSAttributedString(string: formatPercent(row.bucket.remainingPercent), attributes: progressPercentAttributes(color: color))
+        let detail = formatResetCountdown(row.bucket.resetAt).map {
+            NSAttributedString(string: $0, attributes: progressDetailAttributes())
+        }
         percent.draw(at: CGPoint(x: textX, y: y + 7.0))
 
-        if let reset = formatResetCountdown(row.bucket.resetAt) {
-            let detail = NSAttributedString(string: reset, attributes: progressDetailAttributes())
+        if let detail {
             detail.draw(at: CGPoint(x: textX, y: y - 0.5))
         }
     }
@@ -1474,7 +1510,7 @@ struct LimitRingRenderer {
     private func progressDetailAttributes() -> [NSAttributedString.Key: Any] {
         [
             .font: NSFont.systemFont(ofSize: 8.2, weight: .semibold),
-            .foregroundColor: NSColor(calibratedWhite: 0.42, alpha: 0.92)
+            .foregroundColor: NSColor(calibratedWhite: 0.54, alpha: 0.92)
         ]
     }
 
@@ -2365,7 +2401,7 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
         if pieces.isEmpty {
             summaryItem.title = "Waiting for Codex limit data"
         } else {
-            let source = ringView.state.source == "log" ? "Local" : "Cached"
+            let source = ringView.state.source.hasPrefix("log") ? "Local" : "Cached"
             summaryItem.title = "\(source) \(formatAge(since: ringView.state.observedAt)) " + pieces.joined(separator: " | ")
         }
     }
