@@ -1,200 +1,158 @@
 # codex-pet-limit-rings
 
-Codex pets are tiny ambient companions for the work happening in Codex. This project adds one more layer to that idea: your pet can quietly show how much Codex capacity you have left, without turning the app into a dashboard.
+Codex 펫 주변에 사용량 한도를 링이나 바로 표시하는 macOS 보조 앱입니다. Codex 앱 번들을 수정하지 않고, 로컬 Codex 상태와 사용량 로그만 읽어 별도 투명 오버레이 창을 그립니다.
 
-The experience is a small macOS companion app. It watches where the Codex pet is, draws either the default usage rings around it or compact usage bars under it, and keeps that overlay attached to the pet as it moves. It does not patch Codex, change pet art, or modify the Codex app bundle.
+앱은 펫 이미지를 교체하지 않습니다. Codex 기본 펫이나 사용자가 선택한 커스텀 펫을 그대로 쓰고, 그 주변에 사용량 표시만 얹습니다.
 
-It works with whatever Codex pet you like. Built-in pet, custom pet, tiny dog, robot, weather daemon, or anything else: the app does not care. It only follows the pet window that Codex is already showing.
+![Codex 기본 펫 아래에 표시된 바 스타일 사용량 오버레이](docs/assets/usage-bars-preview.png)
 
-![Codex pet usage overlay in optional bar style near a Codex pet](docs/assets/codex-pet-limit-rings-screenshot.png)
+위 이미지는 Codex 기본 펫을 합성한 문서용 예시입니다. 실제 실행 시에는 Codex가 띄운 현재 펫을 그대로 따라갑니다.
 
-## What You See
+## 빠른 설치
 
-The default overlay is a pair of rings around the pet:
-
-- The outer ring shows the short-window limit remaining.
-- The inner ring shows the weekly limit remaining.
-- Percentages and reset countdowns are shown in compact readout badges.
-- The menu's `Display Style` item can switch to compact bars below the pet.
-- In bar style, the top bar shows the short-window limit remaining and the bottom bar shows the weekly limit remaining.
-- Color moves from calm green/blue to amber and red as capacity gets low.
-- A small menu-bar icon lets you inspect recent token usage, hide the overlay, switch between bars and rings, adjust bar position and width, refresh data, or quit.
-- `Track Turn Usage` is off by default. When enabled, a short toast appears near the overlay when a new turn's token usage is observed.
-
-The menu's `Display Style` item switches between `Rings` and `Bars`; new installs default to `Rings`. `Track Turn Usage` defaults to off and can be enabled from the menu when you want recent turn token toasts and menu rows. Position and width controls apply to the bar style; the ring style stays centered around the pet.
-When turn tracking is enabled, the same menu also shows recent window/turn token counts from local usage events and the latest short/weekly limit delta.
-
-When the Codex pet is closed, the overlay disappears. When the pet comes back, it comes back too. On multi-display setups, the overlay stays with the pet instead of jumping to whichever screen is focused.
-
-Because the usage overlay is drawn in a separate transparent window, it does not need pet-specific sprites, masks, metadata, or configuration. Change pets in Codex and the overlay follows the new one automatically.
-
-## Track Turn Usage
-
-`Track Turn Usage` is an optional local estimate for recent Codex turns. It is off by default. When enabled, the app reads response `usage` counters grouped by `thread_id + turn_id`.
-
-By default, it can fall back to recent rows in the local Codex SQLite log. For cleaner end-of-turn updates, install the optional Codex `Stop` hook:
-
-```bash
-tools/install-turn-usage-hook.sh
-```
-
-The hook runs when Codex stops a turn, appends a small `session/thread/turn` job to `~/.codex/codex-pet-limit-rings/turn-usage-queue.jsonl`, and returns immediately. A short-lived background worker then skips Codex Plan mode turns by reading the turn's local transcript `collaboration_mode_kind`, records a compact skip marker for the app's SQLite fallback, sums non-plan local `response.completed` usage rows, dedupes calls by `response.id` when present, and writes compact counters, including goal-style `effective_tokens`, to `~/.codex/codex-pet-limit-rings/turn-usage.json`. It also updates `turn-usage-ledger.json` and writes `turn-usage-summary.json`, a bounded ledger rollup for today's and the latest session's `Used` totals. The menu-bar app reads those small state files and recent SQLite rows, merges duplicate turns by `thread_id + turn_id`, and keeps the more complete duplicate when both sources contain the same turn.
-
-The menu's `Track Turn Usage` toggle also writes `~/.codex/codex-pet-limit-rings/settings.json`. When the toggle is off, an installed hook exits immediately without reading SQLite or updating turn-usage state/log files.
-
-The hook is optional because it has more setup than the fallback reader. It modifies Codex hook config, requires Codex to trust the hook command, and needs Codex sessions to be restarted after install or uninstall. The tradeoff is better finalized records without making Codex wait for SQLite reads: hook records arrive after Codex finishes a turn, while fallback rows can still appear from periodic log polling.
-
-Use the fallback reader when you want the simplest setup. Use the hook when you want cleaner per-turn accounting and are comfortable with the extra local Codex hook configuration.
-
-The menu and toast show:
-
-- `Used`: goal-style used tokens, calculated as `max(0, In - Cached) + Out`.
-- `Used Today` and `Session`: today and latest-session `Used` totals from the hook's bounded ledger when available.
-- `I`: input tokens reported by the response usage object.
-- `Ca`: cached input tokens reported by the response usage object.
-- `O`: output tokens reported by the response usage object.
-- `2c`, `3c`, and similar counts: multiple response usage events observed inside the same grouped turn.
-
-These values are useful for understanding recent local activity, but they are not a billing calculator or the official rate-limit formula. `Limit delta` is separate: it compares consecutive local `codex.rate_limits` events and can include other active Codex windows.
-
-See `docs/recent-usage.md` for the full semantics and known limits.
-
-## Why It Works This Way
-
-The important design choice is the companion boundary. A menu item inside Codex itself would mean patching Electron app files and redoing that patch after app updates. That is brittle and hard to open source.
-
-`codex-pet-limit-rings` stays outside the Codex app. It reads local Codex state and the latest local `codex.rate_limits` event, then renders its own transparent always-on-top window under the pet. The result is reversible, inspectable, and easy for another Codex agent to install or modify.
-
-Pet wakeups are handled by a lightweight filesystem watcher on Codex's local global-state file, with a slow fallback timer as a safety net. That lets the overlay snap back when the pet is re-enabled without constantly polling for position changes.
-
-## Quick Start
-
-Install the companion app as a login item:
+저장소를 로컬에 받은 뒤 실행합니다. `git clone`이 가장 편하지만, GitHub ZIP을 받아도 됩니다.
 
 ```bash
 tools/install-limit-rings.sh
 ```
 
-You should see a small usage icon in the macOS menu bar. Use that menu to toggle `Track Turn Usage`, inspect recent token usage, toggle `Show Usage Overlay`, switch `Display Style`, adjust bar-only layout controls, refresh the latest usage data, or quit. The usage summary includes how old the local rate-limit log entry is.
-
-Then use any Codex pet normally. No pet setup step is required.
-
-Run a development build without installing the login item:
+개발 모드로 한 번만 실행:
 
 ```bash
 tools/run-limit-rings.sh
 ```
 
-Uninstall everything the installer adds:
+제거:
 
 ```bash
 tools/uninstall-limit-rings.sh
-```
-
-Remove only the optional turn-usage hook:
-
-```bash
 tools/uninstall-turn-usage-hook.sh
 ```
 
-## Give This Repo To Codex
+## Codex에게 맡기기
 
-This repository is structured so a Codex agent can pick it up from a GitHub link.
-
-Ask the agent:
+이 저장소는 Codex 에이전트가 바로 설치할 수 있게 구성되어 있습니다. Codex에게 이렇게 요청하면 됩니다.
 
 ```text
 Use the bundled codex-pet-limit-rings skill from this repository. Install the usage-overlay companion for my Codex pet, verify the LaunchAgent is running, and confirm the overlay stays anchored to the pet.
 ```
 
-The agent should read:
+관련 파일:
 
-- `AGENTS.md` for the project contract.
-- `skills/codex-pet-limit-rings/SKILL.md` for the install, debug, and validation workflow.
-- `docs/limit-rings.md` for the data and rendering model.
-- `docs/recent-usage.md` for the menu token-counter semantics.
+- [AGENTS.md](AGENTS.md): 프로젝트 작업 규칙
+- [skills/codex-pet-limit-rings/SKILL.md](skills/codex-pet-limit-rings/SKILL.md): 설치/검증 워크플로
+- [docs/limit-rings.md](docs/limit-rings.md): 데이터와 렌더링 모델
+- [docs/recent-usage.md](docs/recent-usage.md): 턴 사용량 표시 의미
 
-To install the bundled skill into local Codex:
+스킬을 로컬 Codex에 설치하려면:
 
 ```bash
 tools/install-codex-skill.sh
 ```
 
-## Data And Privacy
+## 이미지로 보는 UI
 
-The app reads only local Codex files:
+아래 이미지는 Codex 기본 펫과 샘플 데이터를 합성한 문서용 예시입니다. 실제 퍼센트와 리셋 시간은 사용자의 로컬 Codex 로그에 따라 바뀝니다.
 
-- `~/.codex/.codex-global-state.json` tells it whether the pet is open and where it is.
-- `~/.codex/logs_2.sqlite` provides the latest local websocket `codex.rate_limits` event and recent response `usage` token counters.
-- `~/.codex/sessions/**/rollout-*.jsonl` may be scanned by the optional `Stop` hook worker to read a turn's `collaboration_mode_kind` and skip Plan mode turns like Codex goal accounting.
-- `~/.codex/codex-pet-limit-rings/settings.json` stores whether `Track Turn Usage` is enabled so the optional hook can no-op when tracking is off.
-- `~/.codex/codex-pet-limit-rings/turn-usage-queue.jsonl` is an optional bounded local queue used by the Codex `Stop` hook worker. It stores only local ids, the local transcript path when Codex provides one, enqueue timestamps, and retry counters.
-- `~/.codex/codex-pet-limit-rings/turn-usage.json` is optionally written by the Codex `Stop` hook and contains session/thread/turn ids, Plan mode skip markers, response ids when present, timestamps, call counts, raw token counters, and goal-style `effective_tokens`.
-- `~/.codex/codex-pet-limit-rings/turn-usage-ledger.json` is optionally written by the Codex `Stop` hook and contains bounded per-turn counters used to avoid duplicate summary accumulation.
-- `~/.codex/codex-pet-limit-rings/turn-usage-summary.json` is optionally written by the Codex `Stop` hook and contains bounded ledger rollups for today's and the latest session's token counters.
-- `~/.codex/codex-pet-limit-rings/turn-usage-hook.log` is an optional bounded diagnostic log for the hook and contains hook status, timestamps, session/turn ids, Plan mode skip markers, mode kind when detected, and call counts.
+### 링
 
-It does not require an OpenAI API key, does not read `~/.codex/auth.json`, and does not call a remote usage endpoint. It does not send pet images, screenshots, prompts, or repo contents anywhere.
+![링 스타일 사용량 오버레이](docs/assets/usage-rings-preview.png)
 
-For stricter local privacy, run the binary with `--no-mouse-monitor` to disable global mouse event monitoring. The overlay still follows Codex's persisted pet state and keeps the usage values visible, but drag-follow is disabled.
-Set `CODEX_PET_LIMIT_RINGS_NO_MOUSE_MONITOR=1` when running `tools/run-limit-rings.sh` or `tools/install-limit-rings.sh` to apply the same mode through the helper scripts.
+새 설치의 기본 표시입니다. 가운데에는 Codex 기본 펫 또는 현재 선택한 펫이 보이고, 바깥 링은 짧은 사용량 창, 안쪽 링은 주간 한도의 남은 비율을 보여 줍니다.
 
-## Project Shape
+### 바
+
+![바 스타일 사용량 오버레이](docs/assets/usage-bars-preview.png)
+
+더 작게 보고 싶을 때 쓰는 표시입니다. 위쪽 바는 짧은 사용량 창, 아래쪽 바는 주간 한도입니다. `Display Style`을 `Bars`로 바꾸면 폭과 위치를 메뉴에서 조정할 수 있습니다.
+
+### 메뉴
+
+![메뉴 막대 항목 예시](docs/assets/usage-menu-preview.png)
+
+메뉴 막대 아이콘에서 오버레이 표시, 링/바 전환, 바 위치, 최근 턴 사용량, 새로고침, 종료를 제어합니다. `Track Turn Usage`는 기본 꺼짐입니다.
+
+### 토스트
+
+![최근 턴 사용량 토스트 예시](docs/assets/usage-toast-preview.png)
+
+`Track Turn Usage`와 `Show Usage Toasts`를 켜면 새 턴 사용량이 관측될 때 짧은 토스트가 뜹니다. `Used`는 `max(0, In - Cached) + Out`으로 계산한 goal 스타일 토큰 값입니다.
+
+## 동작 방식
+
+앱은 세 파일/상태를 중심으로 동작합니다.
+
+- `~/.codex/.codex-global-state.json`: 펫 표시 여부와 위치
+- `~/.codex/logs_2.sqlite`: 최신 로컬 `codex.rate_limits` 이벤트와 response `usage`
+- `~/.codex/codex-pet-limit-rings/*`: 선택 hook의 설정과 작은 로컬 카운터
+
+펫을 닫으면 오버레이도 사라지고, 다시 켜면 따라옵니다. 여러 모니터에서도 현재 펫 위치를 기준으로 움직입니다.
+
+## Track Turn Usage
+
+최근 Codex 턴의 로컬 토큰 사용량을 메뉴와 토스트에 보여 주는 선택 기능입니다. 더 정확한 종료 시점 기록이 필요하면 `Stop` hook을 설치합니다.
+
+```bash
+tools/install-turn-usage-hook.sh
+```
+
+표시 값:
+
+- `Used`: `max(0, In - Cached) + Out`
+- `Used Today`: 오늘 사용 토큰
+- `Session`: 최신 세션 사용 토큰
+- `I`, `Ca`, `O`: input, cached input, output tokens
+- `2c`, `3c`: 같은 턴 그룹에서 관측된 response usage 호출 수
+
+이 값은 로컬 활동을 이해하기 위한 보조 정보이며 과금 계산기나 공식 rate-limit 산식이 아닙니다. 자세한 내용은 [docs/recent-usage.md](docs/recent-usage.md)를 참고하세요.
+
+## 프라이버시
+
+앱은 로컬 파일만 읽고, OpenAI API 키나 `~/.codex/auth.json`을 읽지 않습니다. 원격 사용량 엔드포인트도 호출하지 않습니다.
+
+전역 마우스 이벤트 모니터링을 끄려면:
+
+```bash
+CODEX_PET_LIMIT_RINGS_NO_MOUSE_MONITOR=1 tools/install-limit-rings.sh
+```
+
+## 프로젝트 구조
 
 ```text
 tools/
-  codex-pet-limit-rings.swift      native macOS companion app
-  codex-turn-usage-stop-hook.py    optional Codex Stop hook writer
-  install-limit-rings.sh           build, install, and start at login
-  uninstall-limit-rings.sh         remove the app and login item
-  install-turn-usage-hook.sh       opt in to Stop-hook turn usage
-  uninstall-turn-usage-hook.sh     remove the optional Stop hook
-  run-limit-rings.sh               development launch
-  build-limit-rings.sh             app bundle builder
-  install-codex-skill.sh           copy the bundled skill into ~/.codex/skills
+  codex-pet-limit-rings.swift      macOS 보조 앱
+  install-limit-rings.sh           빌드/설치/로그인 항목 시작
+  uninstall-limit-rings.sh         앱과 로그인 항목 제거
+  install-turn-usage-hook.sh       선택 Stop hook 설치
+  run-limit-rings.sh               개발 실행
 
 skills/codex-pet-limit-rings/
-  SKILL.md                         Codex-agent workflow for this project
+  SKILL.md                         Codex 에이전트용 작업 흐름
 
 docs/
-  limit-rings.md                   implementation contract and data flow
-  recent-usage.md                  Track Turn Usage semantics and caveats
-
-experiments/weather-pets/
-  earlier weather-pet renderer     kept as a separate experiment
+  assets/                          README 이미지
+  limit-rings.md                   구현 계약
+  recent-usage.md                  턴 사용량 표시 의미
 ```
 
-## Development
-
-Build the app:
+## 개발
 
 ```bash
 tools/build-limit-rings.sh
-```
-
-Render a static preview PNG:
-
-```bash
 swiftc tools/codex-pet-limit-rings.swift -o tmp/codex-pet-limit-rings -framework AppKit -lsqlite3
 tmp/codex-pet-limit-rings --preview tmp/limit-rings-preview.png --size 164
-```
-
-Validate the shell scripts:
-
-```bash
 bash -n tools/*.sh
-```
-
-Run the focused turn-usage reader test:
-
-```bash
 tools/test-limit-rings-usage.sh
 ```
 
-## Experiments
+문서용 샘플 이미지:
 
-The original exploration included a Python renderer for weather-mutated Codex pets. That work now lives under `experiments/weather-pets/` so the public repo can stay focused on limit rings while preserving the larger idea: Codex pets can become ambient interfaces for state, context, and mood.
+```bash
+tmp/codex-pet-limit-rings --preview docs/assets/usage-rings-preview.png --preview-sample --preview-style rings --preview-background --preview-pet docs/assets/codex-default-pet.png --size 260
+tmp/codex-pet-limit-rings --preview docs/assets/usage-bars-preview.png --preview-sample --preview-style bars --preview-background --preview-pet docs/assets/codex-default-pet.png --size 260
+tmp/codex-pet-limit-rings --preview docs/assets/usage-toast-preview.png --preview-sample --preview-style rings --preview-toasts --preview-background --preview-pet docs/assets/codex-default-pet.png --size 260
+```
 
-## License
+## 라이선스
 
-MIT. See `LICENSE`.
+MIT. 자세한 내용은 [LICENSE](LICENSE)를 참고하세요.

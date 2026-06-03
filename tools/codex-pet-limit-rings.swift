@@ -280,6 +280,11 @@ struct LimitRingsConfig {
     var turnUsageSummaryPath: URL
     var turnUsageSettingsPath: URL
     var previewPath: URL?
+    var previewStyle: UsageDisplayStyle = .rings
+    var previewUsesSampleData: Bool = false
+    var previewShowsToasts: Bool = false
+    var previewUsesBackground: Bool = false
+    var previewPetImagePath: URL?
     var fallbackSize: CGFloat = 220
     var mouseMonitorEnabled: Bool = true
 }
@@ -940,12 +945,16 @@ struct LimitRingRenderer {
     var barOffset: CGSize
     var checkPulse: CGFloat
     var usageToastTurns: [UsageTurnSummary]
+    var previewPetImagePath: URL? = nil
 
     func draw(in rect: CGRect) {
         guard let context = NSGraphicsContext.current?.cgContext else { return }
         context.saveGState()
         context.setShouldAntialias(true)
         context.clear(rect)
+        if let previewPetImagePath {
+            drawPreviewPet(imagePath: previewPetImagePath, in: rect, displayStyle: displayStyle)
+        }
 
         switch displayStyle {
         case .bars:
@@ -2967,17 +2976,32 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
 }
 
 func renderPreview(config: LimitRingsConfig) -> Bool {
-    let state = LimitStateReader(
-        logsPath: config.logsPath,
-        turnUsageStatePath: config.turnUsageStatePath,
-        turnUsageSummaryPath: config.turnUsageSummaryPath
-    ).readLatest()
+    let state = config.previewUsesSampleData
+        ? samplePreviewLimitState()
+        : LimitStateReader(
+            logsPath: config.logsPath,
+            turnUsageStatePath: config.turnUsageStatePath,
+            turnUsageSummaryPath: config.turnUsageSummaryPath
+        ).readLatest()
+    let toastTurns = config.previewShowsToasts ? samplePreviewUsageTurns() : []
     let size = CGSize(width: config.fallbackSize, height: config.fallbackSize)
     let image = NSImage(size: size)
     image.lockFocus()
-    NSColor.clear.setFill()
+    if config.previewUsesBackground {
+        NSColor(calibratedWhite: 0.07, alpha: 1.0).setFill()
+    } else {
+        NSColor.clear.setFill()
+    }
     NSRect(origin: .zero, size: size).fill()
-    LimitRingRenderer(state: state, displayStyle: .rings, barWidth: UsageBarWidthPreset.normal.width, barOffset: .zero, checkPulse: 0.55, usageToastTurns: []).draw(in: CGRect(origin: .zero, size: size))
+    LimitRingRenderer(
+        state: state,
+        displayStyle: config.previewStyle,
+        barWidth: UsageBarWidthPreset.normal.width,
+        barOffset: .zero,
+        checkPulse: 0.55,
+        usageToastTurns: toastTurns,
+        previewPetImagePath: config.previewPetImagePath
+    ).draw(in: CGRect(origin: .zero, size: size))
     image.unlockFocus()
 
     guard let previewPath = config.previewPath,
@@ -2995,6 +3019,65 @@ func renderPreview(config: LimitRingsConfig) -> Bool {
         fputs("codex-pet-limit-rings: could not write preview: \(error)\n", stderr)
         return false
     }
+}
+
+private func drawPreviewPet(imagePath: URL, in rect: CGRect, displayStyle: UsageDisplayStyle) {
+    guard let image = NSImage(contentsOf: imagePath) else { return }
+    let petSize: CGFloat
+    let center: CGPoint
+    switch displayStyle {
+    case .rings:
+        let ringAreaHeight = max(1.0, rect.height - usageRingTopPadding)
+        petSize = min(rect.width, ringAreaHeight) * 0.78
+        center = CGPoint(x: rect.midX, y: ringAreaHeight / 2.0)
+    case .bars:
+        petSize = min(rect.width * 0.62, rect.height * 0.62)
+        center = CGPoint(x: rect.midX, y: rect.midY + petSize * 0.22)
+    }
+    let petRect = CGRect(
+        x: center.x - petSize / 2.0,
+        y: center.y - petSize / 2.0,
+        width: petSize,
+        height: petSize
+    )
+    image.draw(in: petRect, from: .zero, operation: .sourceOver, fraction: 1.0)
+}
+
+private func samplePreviewLimitState() -> LimitState {
+    let now = Date()
+    let timestamp = now.timeIntervalSince1970
+    return LimitState(
+        planType: "pro",
+        primary: LimitBucket(usedPercent: 24.0, windowMinutes: 300.0, resetAt: timestamp + 2.0 * 60.0 * 60.0 + 38.0 * 60.0),
+        secondary: LimitBucket(usedPercent: 44.0, windowMinutes: 7.0 * 24.0 * 60.0, resetAt: timestamp + 4.0 * 24.0 * 60.0 * 60.0),
+        additional: [
+            (name: "gpt-5.1", bucket: LimitBucket(usedPercent: 12.0, windowMinutes: nil, resetAt: nil)),
+            (name: "gpt-5.1-codex", bucket: LimitBucket(usedPercent: 67.0, windowMinutes: nil, resetAt: nil))
+        ],
+        observedAt: now,
+        source: "preview"
+    )
+}
+
+private func samplePreviewUsageTurns() -> [UsageTurnSummary] {
+    let now = Date()
+    let calls = [
+        UsageCallSummary(observedAt: now, inputTokens: 9_200, cachedTokens: 2_400, outputTokens: 1_100, effectiveTokens: 7_900),
+        UsageCallSummary(observedAt: now, inputTokens: 9_600, cachedTokens: 2_700, outputTokens: 1_100, effectiveTokens: 8_000)
+    ]
+    return [
+        UsageTurnSummary(
+            threadID: "thread-preview-0001",
+            turnID: "turn-preview-a327",
+            windowLabel: "W0",
+            observedAt: now,
+            inputTokens: 18_800,
+            cachedTokens: 5_100,
+            outputTokens: 2_200,
+            effectiveTokens: 15_900,
+            calls: calls
+        )
+    ]
 }
 
 func parseConfig() -> LimitRingsConfig? {
@@ -3016,7 +3099,7 @@ func parseConfig() -> LimitRingsConfig? {
         switch arg {
         case "--help", "-h":
             print("""
-            Usage: codex-pet-limit-rings [--preview PATH] [--codex-home PATH] [--logs PATH] [--turn-usage-state PATH] [--turn-usage-summary PATH] [--state PATH] [--no-mouse-monitor]
+            Usage: codex-pet-limit-rings [--preview PATH] [--preview-style rings|bars] [--preview-sample] [--preview-toasts] [--preview-background] [--preview-pet PATH] [--codex-home PATH] [--logs PATH] [--turn-usage-state PATH] [--turn-usage-summary PATH] [--state PATH] [--no-mouse-monitor]
 
             Draws a transparent Codex rate-limit overlay near the current pet using local Codex logs.
             """)
@@ -3025,6 +3108,23 @@ func parseConfig() -> LimitRingsConfig? {
             guard let value = args.first else { return nil }
             args.removeFirst()
             config.previewPath = URL(fileURLWithPath: value)
+        case "--preview-style":
+            guard let value = args.first,
+                  let style = UsageDisplayStyle(rawValue: value) else {
+                return nil
+            }
+            args.removeFirst()
+            config.previewStyle = style
+        case "--preview-sample":
+            config.previewUsesSampleData = true
+        case "--preview-toasts":
+            config.previewShowsToasts = true
+        case "--preview-background":
+            config.previewUsesBackground = true
+        case "--preview-pet":
+            guard let value = args.first else { return nil }
+            args.removeFirst()
+            config.previewPetImagePath = URL(fileURLWithPath: value)
         case "--codex-home":
             guard let value = args.first else { return nil }
             args.removeFirst()
