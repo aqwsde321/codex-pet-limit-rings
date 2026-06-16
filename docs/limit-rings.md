@@ -100,7 +100,7 @@ The hook installer copies the hook script into:
 ~/.codex/codex-pet-limit-rings/hooks/codex-turn-usage-stop-hook.py
 ```
 
-and registers an inline `[[hooks.Stop]]` entry in `~/.codex/config.toml`. It also enables `codex_hooks` in the same file. Restart Codex sessions after installing or uninstalling the hook so Codex reloads hook configuration.
+and registers an inline `[[hooks.Stop]]` entry in `~/.codex/config.toml`. It also enables `hooks` in the same file. Restart Codex sessions after installing or uninstalling the hook so Codex reloads hook configuration.
 
 This hook path has more setup than the default SQLite fallback: Codex must trust the local hook command, and existing sessions must restart before it runs. It is still optional. Use it when you want finalized turn-usage records from Codex's `Stop` event; the hook queues the turn and returns immediately, then a short-lived worker reads SQLite and writes the compact result. The app still keeps the periodic recent-log polling fallback and merges both sources.
 

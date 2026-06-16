@@ -135,9 +135,17 @@ def has_inline_hook_sections(text):
     return False
 
 
-def restore_codex_hooks_setting(text):
+def canonical_hooks_line(line):
+    if toml_key(line) == "codex_hooks":
+        return f"hooks = {line.split('=', 1)[1].strip()}"
+    return line
+
+
+def restore_hooks_setting(text):
     install_state = read_install_state()
-    hook_state = install_state.get("codex_hooks")
+    hook_state = install_state.get("hooks")
+    if not isinstance(hook_state, dict):
+        hook_state = install_state.get("codex_hooks")
     if not isinstance(hook_state, dict):
         return text
 
@@ -146,19 +154,32 @@ def restore_codex_hooks_setting(text):
     features_start, features_end = find_features_block(lines)
     if features_start is not None:
         setting_index = None
+        legacy_setting_indices = []
         for index in range(features_start + 1, features_end):
-            if toml_key(lines[index]) == "codex_hooks":
+            key = toml_key(lines[index])
+            if key == "hooks":
                 setting_index = index
-                break
+            elif key == "codex_hooks":
+                legacy_setting_indices.append(index)
+
+        if setting_index is None and legacy_setting_indices:
+            setting_index = legacy_setting_indices[0]
+            legacy_setting_indices = legacy_setting_indices[1:]
 
         previous_line = hook_state.get("previous_line")
         if setting_index is not None:
             if keep_enabled_for_other_hooks:
-                lines[setting_index] = "codex_hooks = true\n"
+                lines[setting_index] = "hooks = true\n"
             elif previous_line is None:
                 del lines[setting_index]
             else:
-                lines[setting_index] = previous_line + "\n"
+                lines[setting_index] = canonical_hooks_line(previous_line) + "\n"
+
+        features_start, features_end = find_features_block(lines)
+        if features_start is not None:
+            for index in reversed(range(features_start + 1, features_end)):
+                if toml_key(lines[index]) == "codex_hooks":
+                    del lines[index]
 
         if hook_state.get("features_existed") is False:
             features_start, features_end = find_features_block(lines)
@@ -167,6 +188,7 @@ def restore_codex_hooks_setting(text):
                 if all(not line.strip() for line in feature_body):
                     del lines[features_start:features_end]
 
+    install_state.pop("hooks", None)
     install_state.pop("codex_hooks", None)
     write_install_state(install_state)
     return "".join(lines)
@@ -204,7 +226,7 @@ def cleanup_local_state():
 
 if config_path.exists():
     original = config_path.read_text(encoding="utf-8")
-    updated = restore_codex_hooks_setting(remove_existing_inline_stop_hooks(original))
+    updated = restore_hooks_setting(remove_existing_inline_stop_hooks(original))
     if updated != original:
         shutil.copy2(config_path, config_path.with_name(f"{config_path.name}.bak.{timestamp}"))
         config_path.write_text(updated, encoding="utf-8")

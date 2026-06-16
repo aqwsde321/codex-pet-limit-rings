@@ -116,7 +116,7 @@ The installer copies the hook script to:
 ~/.codex/codex-pet-limit-rings/hooks/codex-turn-usage-stop-hook.py
 ```
 
-and registers an inline `[[hooks.Stop]]` entry in `~/.codex/config.toml`. It also enables `codex_hooks` in the same file. Older installer versions used `~/.codex/hooks.json`; the current installer removes this package's legacy `hooks.json` entry to avoid duplicate runs.
+and registers an inline `[[hooks.Stop]]` entry in `~/.codex/config.toml`. It also enables `hooks` in the same file. Older installer versions used `~/.codex/hooks.json`; the current installer removes this package's legacy `hooks.json` entry to avoid duplicate runs.
 
 When Codex ends a turn, the hook receives the Codex hook payload on stdin. It writes a small local queue job and returns so Codex does not wait on SQLite. A short-lived background worker then uses `turn_id` plus available local session/thread identifiers to read the turn's local transcript `collaboration_mode_kind`, skips Plan mode turns, writes compact skip markers so the app can hide matching SQLite fallback rows, finds matching local `response.completed` usage rows in the selected `logs_2.sqlite`, dedupes calls by `response.id` when present, sums the calls for that turn, writes the compact result to `turn-usage.json` with raw counters plus goal-style `effective_tokens`, updates the bounded per-turn ledger, and rewrites `turn-usage-summary.json` from the ledger.
 
@@ -138,7 +138,7 @@ The hook is intentionally opt-in because it changes local Codex configuration ou
 
 1. Copies the hook script into `~/.codex/codex-pet-limit-rings/hooks/`.
 2. Adds an inline `[[hooks.Stop]]` entry to `~/.codex/config.toml`.
-3. Enables `codex_hooks` in `~/.codex/config.toml`.
+3. Enables `hooks` in `~/.codex/config.toml`.
 4. Requires Codex to trust the hook command.
 5. Requires existing Codex sessions to be restarted before the new hook config is active.
 

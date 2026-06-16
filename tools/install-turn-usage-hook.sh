@@ -51,8 +51,8 @@ def write_install_state(state):
         handle.write("\n")
 
 
-def is_true_setting(line):
-    return toml_key(line) == "codex_hooks" and toml_value(line).lower() == "true"
+def is_true_setting(line, key="hooks"):
+    return toml_key(line) == key and toml_value(line).lower() == "true"
 
 
 def toml_key(line):
@@ -88,11 +88,16 @@ def has_inline_hook_sections(text):
     return False
 
 
-def ensure_codex_hooks_feature():
+def canonical_hooks_line(line):
+    return f"hooks = {toml_value(line)}"
+
+
+def ensure_hooks_feature():
     config_path.parent.mkdir(parents=True, exist_ok=True)
     original = config_path.read_text(encoding="utf-8") if config_path.exists() else ""
     lines = original.splitlines(keepends=True)
     changed = False
+    feature_state_changed = False
 
     features_start = None
     features_end = len(lines)
@@ -111,35 +116,54 @@ def ensure_codex_hooks_feature():
             lines[-1] += "\n"
         if lines and lines[-1].strip():
             lines.append("\n")
-        lines.extend(["[features]\n", "codex_hooks = true\n"])
+        lines.extend(["[features]\n", "hooks = true\n"])
         changed = True
+        feature_state_changed = True
         previous_line = None
     else:
         setting_index = None
+        legacy_setting_indices = []
         for index in range(features_start + 1, features_end):
-            if toml_key(lines[index]) == "codex_hooks":
+            key = toml_key(lines[index])
+            if key == "hooks":
                 setting_index = index
-                break
+            elif key == "codex_hooks":
+                legacy_setting_indices.append(index)
         if setting_index is None:
-            lines.insert(features_end, "codex_hooks = true\n")
-            changed = True
-            previous_line = None
+            if legacy_setting_indices:
+                setting_index = legacy_setting_indices[0]
+                previous_line = canonical_hooks_line(lines[setting_index])
+                lines[setting_index] = "hooks = true\n"
+                changed = True
+                feature_state_changed = not is_true_setting(previous_line)
+                legacy_setting_indices = legacy_setting_indices[1:]
+            else:
+                lines.insert(features_end, "hooks = true\n")
+                changed = True
+                feature_state_changed = True
+                previous_line = None
         elif not is_true_setting(lines[setting_index]):
             previous_line = lines[setting_index].rstrip("\n")
-            lines[setting_index] = "codex_hooks = true\n"
+            lines[setting_index] = "hooks = true\n"
             changed = True
+            feature_state_changed = True
         else:
             previous_line = None
 
+        for index in reversed(legacy_setting_indices):
+            del lines[index]
+            changed = True
+
     updated = "".join(lines)
     if changed and updated != original:
-        install_state = read_install_state()
-        install_state.setdefault("codex_hooks", {
-            "features_existed": features_existed,
-            "inline_hooks_existed": has_inline_hook_sections(original),
-            "previous_line": previous_line,
-        })
-        write_install_state(install_state)
+        if feature_state_changed:
+            install_state = read_install_state()
+            install_state.setdefault("hooks", {
+                "features_existed": features_existed,
+                "inline_hooks_existed": has_inline_hook_sections(original),
+                "previous_line": previous_line,
+            })
+            write_install_state(install_state)
         backup(config_path)
         config_path.write_text(updated, encoding="utf-8")
 
@@ -262,7 +286,7 @@ def remove_legacy_json_hook():
         handle.write("\n")
 
 
-ensure_codex_hooks_feature()
+ensure_hooks_feature()
 ensure_inline_stop_hook()
 remove_legacy_json_hook()
 PY
