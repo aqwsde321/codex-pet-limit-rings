@@ -135,6 +135,30 @@ def test_queue_job_preserves_transcript_path(hook):
     assert hook.queue_job_payload(job)["transcript_path"] == "/tmp/rollout-test.jsonl"
 
 
+def test_default_logs_path_prefers_active_sqlite_dir(hook):
+    with tempfile.TemporaryDirectory() as tmpdir:
+        codex_home = Path(tmpdir)
+        legacy_logs_path = codex_home / "logs_2.sqlite"
+        sqlite_logs_path = codex_home / "sqlite" / "logs_2.sqlite"
+        sqlite_logs_path.parent.mkdir()
+        legacy_logs_path.touch()
+        sqlite_logs_path.touch()
+        os.utime(legacy_logs_path, (100, 100))
+        os.utime(sqlite_logs_path, (200, 200))
+
+        with patched_env({"CODEX_HOME": tmpdir}):
+            assert hook.default_logs_path() == sqlite_logs_path
+
+
+def test_default_logs_path_falls_back_to_legacy_path(hook):
+    with tempfile.TemporaryDirectory() as tmpdir:
+        legacy_logs_path = Path(tmpdir) / "logs_2.sqlite"
+        legacy_logs_path.touch()
+
+        with patched_env({"CODEX_HOME": tmpdir}):
+            assert hook.default_logs_path() == legacy_logs_path
+
+
 def test_skipped_turn_updates_state(hook):
     with tempfile.TemporaryDirectory() as tmpdir:
         state_path = Path(tmpdir) / "turn-usage.json"
@@ -278,6 +302,8 @@ def main():
     test_turn_mode_uses_explicit_transcript_path(hook)
     test_session_transcript_paths_limits_recent_candidates(hook)
     test_queue_job_preserves_transcript_path(hook)
+    test_default_logs_path_prefers_active_sqlite_dir(hook)
+    test_default_logs_path_falls_back_to_legacy_path(hook)
     test_skipped_turn_updates_state(hook)
     test_sync_existing_skipped_turns_rewrites_ledger_and_summary(hook)
     test_prune_skipped_turns_ignores_malformed_rows(hook)

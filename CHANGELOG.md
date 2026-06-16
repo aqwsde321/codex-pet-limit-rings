@@ -28,4 +28,5 @@ Notable changes to `codex-pet-limit-rings` are recorded here.
 
 ### Fixed
 
+- Usage tracking now follows Codex SQLite logs after the active database moved under `~/.codex/sqlite/`, while keeping legacy log paths supported.
 - Cross-display pet drags bridge brief live-overlay coordinate gaps from the mouse-to-pet offset instead of waiting for persisted pet state to catch up.

@@ -1180,10 +1180,33 @@ def default_logs_path():
     if override:
         return Path(override).expanduser()
     codex_home = default_codex_home()
-    logs2 = codex_home / "logs_2.sqlite"
-    if logs2.exists():
+    logs2 = newest_existing_path([
+        codex_home / "sqlite" / "logs_2.sqlite",
+        codex_home / "logs_2.sqlite",
+    ])
+    if logs2:
         return logs2
+    logs1 = newest_existing_path([
+        codex_home / "sqlite" / "logs_1.sqlite",
+        codex_home / "logs_1.sqlite",
+    ])
+    if logs1:
+        return logs1
     return codex_home / "logs_1.sqlite"
+
+
+def newest_existing_path(paths):
+    newest_path = None
+    newest_mtime = None
+    for path in paths:
+        try:
+            mtime = path.stat().st_mtime
+        except OSError:
+            continue
+        if newest_path is None or mtime > newest_mtime:
+            newest_path = path
+            newest_mtime = mtime
+    return newest_path
 
 
 def default_state_path():

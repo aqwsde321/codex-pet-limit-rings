@@ -103,7 +103,7 @@ tools/install-codex-skill.sh
 앱은 세 파일/상태를 중심으로 동작합니다.
 
 - `~/.codex/.codex-global-state.json`: 펫 표시 여부와 위치
-- `~/.codex/logs_2.sqlite`: 최신 로컬 `codex.rate_limits` 이벤트와 response `usage`
+- `~/.codex/sqlite/logs_2.sqlite` 또는 legacy `~/.codex/logs_2.sqlite`: 최신 로컬 `codex.rate_limits` 이벤트와 response `usage`
 - `~/.codex/codex-pet-limit-rings/*`: 선택 hook의 설정과 작은 로컬 카운터
 
 펫을 닫으면 오버레이도 사라지고, 다시 켜면 따라옵니다. 여러 모니터에서도 현재 펫 위치를 기준으로 움직입니다.

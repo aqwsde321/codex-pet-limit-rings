@@ -33,7 +33,7 @@ The app reads local Codex files only:
 
 - `~/.codex/.codex-global-state.json`: current pet bounds, using `electron-avatar-overlay-bounds.mascot`.
 - `electron-avatar-overlay-open` in the same state file: whether the Codex pet is currently open.
-- `~/.codex/logs_2.sqlite`: usage source using the newest websocket `codex.rate_limits` event and recent response `usage` token counters from `target = 'codex_api::endpoint::responses_websocket'`.
+- `~/.codex/sqlite/logs_2.sqlite` or legacy `~/.codex/logs_2.sqlite`: usage source using the newest websocket `codex.rate_limits` event and recent response `usage` token counters from `target = 'codex_api::endpoint::responses_websocket'`.
 - `~/.codex/sessions/**/rollout-*.jsonl`: optional `Stop` hook worker source for `collaboration_mode_kind`, used only to skip Plan mode turns from finalized turn-usage records.
 - `~/.codex/codex-pet-limit-rings/settings.json`: app-written `Track Turn Usage` setting used by the optional hook to no-op when tracking is off.
 - `~/.codex/codex-pet-limit-rings/turn-usage-queue.jsonl`: optional bounded local queue used by the `Stop` hook worker, containing ids, the local transcript path when Codex provides one, enqueue timestamps, and retry counters.

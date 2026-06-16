@@ -3171,11 +3171,32 @@ func parseConfig() -> LimitRingsConfig? {
 }
 
 func defaultLogsPath(codexHome: URL) -> URL {
-    let logs2 = codexHome.appendingPathComponent("logs_2.sqlite")
-    if FileManager.default.fileExists(atPath: logs2.path) {
+    if let logs2 = newestExistingPath([
+        codexHome.appendingPathComponent("sqlite/logs_2.sqlite"),
+        codexHome.appendingPathComponent("logs_2.sqlite"),
+    ]) {
         return logs2
     }
+    if let logs1 = newestExistingPath([
+        codexHome.appendingPathComponent("sqlite/logs_1.sqlite"),
+        codexHome.appendingPathComponent("logs_1.sqlite"),
+    ]) {
+        return logs1
+    }
+
     return codexHome.appendingPathComponent("logs_1.sqlite")
+}
+
+private func newestExistingPath(_ candidates: [URL]) -> URL? {
+    var newest: (url: URL, modifiedAt: Date)?
+    for candidate in candidates where FileManager.default.fileExists(atPath: candidate.path) {
+        let attributes = try? FileManager.default.attributesOfItem(atPath: candidate.path)
+        let modifiedAt = (attributes?[.modificationDate] as? Date) ?? .distantPast
+        if newest == nil || modifiedAt > newest!.modifiedAt {
+            newest = (candidate, modifiedAt)
+        }
+    }
+    return newest?.url
 }
 
 func defaultTurnUsageStatePath(codexHome: URL) -> URL {

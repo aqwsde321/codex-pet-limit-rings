@@ -22,6 +22,8 @@ enum LimitRingsUsageTestError: Error, CustomStringConvertible {
 struct LimitRingsUsageTests {
     static func main() {
         do {
+            try testDefaultLogsPathPrefersActiveSQLiteDirectory()
+            try testDefaultLogsPathFallsBackToLegacyLogsPath()
             try testLimitStateSkipsInvalidRateLimitRows()
             try testSQLiteFallbackSkipsPlanModeTurns()
             print("limit-rings usage tests passed")
@@ -29,6 +31,50 @@ struct LimitRingsUsageTests {
             fputs("limit-rings usage tests failed: \(error)\n", stderr)
             exit(1)
         }
+    }
+
+    private static func testDefaultLogsPathPrefersActiveSQLiteDirectory() throws {
+        let fileManager = FileManager.default
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("codex-limit-rings-default-logs-\(UUID().uuidString)", isDirectory: true)
+        try fileManager.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: root) }
+
+        let legacyLogsPath = root.appendingPathComponent("logs_2.sqlite")
+        let sqliteDir = root.appendingPathComponent("sqlite", isDirectory: true)
+        let sqliteLogsPath = sqliteDir.appendingPathComponent("logs_2.sqlite")
+        try fileManager.createDirectory(at: sqliteDir, withIntermediateDirectories: true)
+        try Data().write(to: legacyLogsPath)
+        try Data().write(to: sqliteLogsPath)
+        try fileManager.setAttributes(
+            [.modificationDate: Date(timeIntervalSince1970: 100)],
+            ofItemAtPath: legacyLogsPath.path
+        )
+        try fileManager.setAttributes(
+            [.modificationDate: Date(timeIntervalSince1970: 200)],
+            ofItemAtPath: sqliteLogsPath.path
+        )
+
+        try expect(
+            defaultLogsPath(codexHome: root).path == sqliteLogsPath.path,
+            "expected active sqlite/ logs_2 path to be preferred"
+        )
+    }
+
+    private static func testDefaultLogsPathFallsBackToLegacyLogsPath() throws {
+        let fileManager = FileManager.default
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("codex-limit-rings-legacy-logs-\(UUID().uuidString)", isDirectory: true)
+        try fileManager.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: root) }
+
+        let legacyLogsPath = root.appendingPathComponent("logs_2.sqlite")
+        try Data().write(to: legacyLogsPath)
+
+        try expect(
+            defaultLogsPath(codexHome: root).path == legacyLogsPath.path,
+            "expected legacy logs_2 path to remain supported"
+        )
     }
 
     private static func testLimitStateSkipsInvalidRateLimitRows() throws {
