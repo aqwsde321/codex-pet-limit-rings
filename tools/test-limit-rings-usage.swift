@@ -25,6 +25,8 @@ struct LimitRingsUsageTests {
             try testDefaultLogsPathPrefersActiveSQLiteDirectory()
             try testDefaultLogsPathFallsBackToLegacyLogsPath()
             try testLimitStateSkipsInvalidRateLimitRows()
+            try testLimitStateRejectsExpiredRateLimitRows()
+            try testLimitStatePrefersAppServerSnapshot()
             try testSQLiteFallbackSkipsPlanModeTurns()
             print("limit-rings usage tests passed")
         } catch {
@@ -101,6 +103,74 @@ struct LimitRingsUsageTests {
 
         try expect(state.primary?.remainingPercent == 85, "expected invalid primary row to be skipped")
         try expect(state.secondary?.remainingPercent == 74, "expected invalid secondary row to be skipped")
+    }
+
+    private static func testLimitStateRejectsExpiredRateLimitRows() throws {
+        let fileManager = FileManager.default
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("codex-limit-rings-expired-\(UUID().uuidString)", isDirectory: true)
+        try fileManager.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: root) }
+
+        let logsPath = root.appendingPathComponent("logs_2.sqlite")
+        let statePath = root.appendingPathComponent("turn-usage.json")
+        let summaryPath = root.appendingPathComponent("turn-usage-summary.json")
+        try createLogsDatabase(at: logsPath)
+
+        let now = Int64(Date().timeIntervalSince1970)
+        try insertRateLimitRow(
+            logsPath: logsPath,
+            ts: now - 10,
+            primaryUsed: 3,
+            secondaryUsed: 31,
+            primaryResetAt: now - 1,
+            secondaryResetAt: now + 604800
+        )
+
+        let state = LimitStateReader(
+            logsPath: logsPath,
+            turnUsageStatePath: statePath,
+            turnUsageSummaryPath: summaryPath
+        ).readLatest()
+
+        try expect(state.primary == nil, "expected expired primary limit data to be rejected")
+        try expect(state.secondary == nil, "expected stale secondary from expired event to be rejected")
+        try expect(state.source == "none", "expected expired rate limit state to be empty")
+    }
+
+    private static func testLimitStatePrefersAppServerSnapshot() throws {
+        let fileManager = FileManager.default
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("codex-limit-rings-app-server-\(UUID().uuidString)", isDirectory: true)
+        try fileManager.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: root) }
+
+        let logsPath = root.appendingPathComponent("logs_2.sqlite")
+        let statePath = root.appendingPathComponent("turn-usage.json")
+        let summaryPath = root.appendingPathComponent("turn-usage-summary.json")
+        try createLogsDatabase(at: logsPath)
+
+        let now = Int64(Date().timeIntervalSince1970)
+        try insertRateLimitRow(logsPath: logsPath, ts: now, primaryUsed: 3, secondaryUsed: 31)
+
+        let appServerState = LimitState(
+            planType: "pro",
+            primary: LimitBucket(usedPercent: 10, windowMinutes: 300, resetAt: Double(now + 3600)),
+            secondary: LimitBucket(usedPercent: 53, windowMinutes: 10080, resetAt: Double(now + 604800)),
+            additional: [],
+            observedAt: Date(),
+            source: "app-server"
+        )
+        let state = LimitStateReader(
+            logsPath: logsPath,
+            turnUsageStatePath: statePath,
+            turnUsageSummaryPath: summaryPath,
+            appServerStateProvider: { appServerState }
+        ).readLatest()
+
+        try expect(state.primary?.remainingPercent == 90, "expected app-server primary value to override log fallback")
+        try expect(state.secondary?.remainingPercent == 47, "expected app-server secondary value to override log fallback")
+        try expect(state.source == "app-server", "expected app-server source")
     }
 
     private static func testSQLiteFallbackSkipsPlanModeTurns() throws {
@@ -195,8 +265,26 @@ struct LimitRingsUsageTests {
     }
 
     private static func insertRateLimitRow(logsPath: URL, ts: Int64, primaryUsed: Int, secondaryUsed: Int) throws {
+        try insertRateLimitRow(
+            logsPath: logsPath,
+            ts: ts,
+            primaryUsed: primaryUsed,
+            secondaryUsed: secondaryUsed,
+            primaryResetAt: ts + 3600,
+            secondaryResetAt: ts + 604800
+        )
+    }
+
+    private static func insertRateLimitRow(
+        logsPath: URL,
+        ts: Int64,
+        primaryUsed: Int,
+        secondaryUsed: Int,
+        primaryResetAt: Int64,
+        secondaryResetAt: Int64
+    ) throws {
         let body = """
-        websocket event: {"type":"codex.rate_limits","plan_type":"pro","rate_limits":{"allowed":true,"limit_reached":false,"primary":{"used_percent":\(primaryUsed),"window_minutes":300,"reset_at":\(ts + 3600)},"secondary":{"used_percent":\(secondaryUsed),"window_minutes":10080,"reset_at":\(ts + 604800)}},"additional_rate_limits":{}}
+        websocket event: {"type":"codex.rate_limits","plan_type":"pro","rate_limits":{"allowed":true,"limit_reached":false,"primary":{"used_percent":\(primaryUsed),"window_minutes":300,"reset_at":\(primaryResetAt)},"secondary":{"used_percent":\(secondaryUsed),"window_minutes":10080,"reset_at":\(secondaryResetAt)}},"additional_rate_limits":{}}
         """
         try insertLogRow(logsPath: logsPath, ts: ts, threadID: "thread-rate", body: body)
     }

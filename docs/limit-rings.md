@@ -14,7 +14,9 @@ The usage overlay is pet-agnostic. It works with any pet Codex displays because 
 - In bar style, bar-only layout controls appear under `Display Style`; `Bar Width` is shown first, followed by an indented `Position` control.
 - In bar style, `Position` uses an inline menu control so position buttons can be clicked repeatedly without reopening the menu. It moves only the bar readouts; turn-usage toasts stay anchored near the pet like ring-style toasts.
 - In bar style, `Bar Width` switches between short, normal, and wide bars. Bar-only controls are hidden in ring style.
-- The menu summary includes how old the local rate-limit log entry is.
+- The menu summary includes the source and age of the current rate-limit snapshot.
+- Expired rate-limit events are treated as unavailable instead of being shown as current usage.
+- When no current rate-limit event is available, the overlay shows compact `NO DATA` text instead of stale percentages.
 - When `Track Turn Usage` is enabled, the menu shows compact color-coded usage-token counts for up to three recent turn groups.
 - When `Track Turn Usage` is enabled, the menu shows the latest short-window and weekly limit delta from consecutive rate-limit events.
 - When `Track Turn Usage` is enabled, a short toast appears near the overlay when a new turn usage total is observed.
@@ -29,11 +31,12 @@ The usage overlay is pet-agnostic. It works with any pet Codex displays because 
 
 ## Data Flow
 
-The app reads local Codex files only:
+The app reads the current Codex rate-limit snapshot first, then falls back to local Codex files:
 
+- `/Applications/Codex.app/Contents/Resources/codex app-server --stdio`: current account limit snapshot via `account/rateLimits/read`. The `codex` limit is rendered as the main short-window and weekly rings; other limit ids are shown as additional model dots.
 - `~/.codex/.codex-global-state.json`: current pet bounds, using `electron-avatar-overlay-bounds.mascot`.
 - `electron-avatar-overlay-open` in the same state file: whether the Codex pet is currently open.
-- `~/.codex/sqlite/logs_2.sqlite` or legacy `~/.codex/logs_2.sqlite`: usage source using the newest websocket `codex.rate_limits` event and recent response `usage` token counters from `target = 'codex_api::endpoint::responses_websocket'`.
+- `~/.codex/sqlite/logs_2.sqlite` or legacy `~/.codex/logs_2.sqlite`: fallback rate-limit source using the newest unexpired websocket `codex.rate_limits` event, plus recent response `usage` token counters from `target = 'codex_api::endpoint::responses_websocket'`.
 - `~/.codex/sessions/**/rollout-*.jsonl`: optional `Stop` hook worker source for `collaboration_mode_kind`, used only to skip Plan mode turns from finalized turn-usage records.
 - `~/.codex/codex-pet-limit-rings/settings.json`: app-written `Track Turn Usage` setting used by the optional hook to no-op when tracking is off.
 - `~/.codex/codex-pet-limit-rings/turn-usage-queue.jsonl`: optional bounded local queue used by the `Stop` hook worker, containing ids, the local transcript path when Codex provides one, enqueue timestamps, and retry counters.
@@ -44,7 +47,7 @@ The app reads local Codex files only:
 
 The app watches `~/.codex/.codex-global-state.json` with a macOS file event source, so pet open/close and position writes trigger an immediate frame update. A slow frame timer remains as a fallback in case the file is replaced or an event is missed.
 
-No OpenAI API key is required. The app does not read `~/.codex/auth.json` and does not call a remote usage endpoint. The menu summary says `Local` when it is showing the local event-log value.
+No OpenAI API key is required. The app does not read `~/.codex/auth.json` and does not call an OpenAI endpoint directly; the Codex app-server returns the account snapshot using Codex's own auth state. The menu summary says `Codex` for app-server values and `Local` when it is showing the local event-log fallback.
 Use `--no-mouse-monitor` to disable global mouse event monitoring; this disables drag-follow while the usage overlay remains visible. The helper scripts apply that mode when `CODEX_PET_LIMIT_RINGS_NO_MOUSE_MONITOR=1` is set.
 
 ## Rendering Model
