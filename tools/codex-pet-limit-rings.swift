@@ -245,6 +245,7 @@ private struct HookSkippedTurnPayload: Decodable {
 private struct HookUsageSummaryPayload: Decodable {
     var today: HookUsageSummaryTotalsPayload?
     var latest_session: HookUsageSummaryTotalsPayload?
+    var updated_at: Double?
 }
 
 private struct HookUsageSummaryTotalsPayload: Decodable {
@@ -639,9 +640,10 @@ final class LimitStateReader {
     }
 
     func readUsageDetails() -> UsageDetails {
-        let hookTurns = readHookUsageTurns()
-        let skippedTurnKeys = readHookSkippedTurnKeys()
-        let summary = readHookUsageSummary()
+        let now = Date()
+        let hookTurns = readHookUsageTurns(now: now)
+        let skippedTurnKeys = readHookSkippedTurnKeys(now: now)
+        let summary = readHookUsageSummary(now: now)
         guard FileManager.default.fileExists(atPath: logsPath.path) else {
             return hookTurns.isEmpty && summary == nil ? .empty : UsageDetails(recentTurns: hookTurns, limitDelta: nil, summary: summary)
         }
@@ -653,8 +655,8 @@ final class LimitStateReader {
         }
         defer { sqlite3_close(db) }
 
-        let limitDelta = readLimitDelta(db: db)
-        return UsageDetails(recentTurns: mergeRecentTurns(hookTurns: hookTurns, sqliteTurns: readRecentTurns(db: db, skippedTurnKeys: skippedTurnKeys)), limitDelta: limitDelta, summary: summary)
+        let limitDelta = readLimitDelta(db: db, now: now)
+        return UsageDetails(recentTurns: mergeRecentTurns(hookTurns: hookTurns, sqliteTurns: readRecentTurns(db: db, skippedTurnKeys: skippedTurnKeys, now: now)), limitDelta: limitDelta, summary: summary)
     }
 
     private func readLatestLog() -> LimitState {
@@ -751,7 +753,7 @@ final class LimitStateReader {
         return now.timeIntervalSince(observedAt) <= max(windowAge, limitStateFallbackMaxAge)
     }
 
-    private func readRecentTurns(db: OpaquePointer, skippedTurnKeys: Set<String>) -> [UsageTurnSummary] {
+    private func readRecentTurns(db: OpaquePointer, skippedTurnKeys: Set<String>, now: Date) -> [UsageTurnSummary] {
         let sql = """
         SELECT ts, ts_nanos, thread_id, feedback_log_body
         FROM logs INDEXED BY idx_logs_ts
@@ -783,6 +785,9 @@ final class LimitStateReader {
             let ts = sqlite3_column_int64(statement, 0)
             let tsNanos = sqlite3_column_int64(statement, 1)
             let observedAt = Date(timeIntervalSince1970: TimeInterval(ts) + TimeInterval(tsNanos) / 1_000_000_000.0)
+            guard isCurrentUsageDate(observedAt, now: now) else {
+                continue
+            }
             guard let sample = parseUsageSample(threadID: threadID, observedAt: observedAt, body: body) else {
                 continue
             }
@@ -851,7 +856,7 @@ final class LimitStateReader {
         return candidateTokens >= existingTokens ? candidate : existing
     }
 
-    private func readHookUsageTurns() -> [UsageTurnSummary] {
+    private func readHookUsageTurns(now: Date) -> [UsageTurnSummary] {
         guard FileManager.default.fileExists(atPath: turnUsageStatePath.path),
               let data = try? Data(contentsOf: turnUsageStatePath),
               let state = try? JSONDecoder().decode(HookUsageStatePayload.self, from: data),
@@ -863,12 +868,13 @@ final class LimitStateReader {
         var turns: [UsageTurnSummary] = []
         for record in records.sorted(by: { ($0.observed_at ?? 0) > ($1.observed_at ?? 0) }) {
             let threadID = record.thread_id ?? record.session_id
-            guard let threadID, !threadID.isEmpty else {
+            guard let threadID, !threadID.isEmpty,
+                  let observedAtUnix = record.observed_at else {
                 continue
             }
 
-            let observedAt = Date(timeIntervalSince1970: record.observed_at ?? Date().timeIntervalSince1970)
-            guard Date().timeIntervalSince(observedAt) <= hookUsageStateMaxAge else {
+            let observedAt = Date(timeIntervalSince1970: observedAtUnix)
+            guard isCurrentUsageDate(observedAt, now: now) else {
                 continue
             }
             let key = usageGroupKey(threadID: threadID, turnID: record.turn_id, observedAt: observedAt)
@@ -901,7 +907,7 @@ final class LimitStateReader {
         return turns
     }
 
-    private func readHookSkippedTurnKeys() -> Set<String> {
+    private func readHookSkippedTurnKeys(now: Date) -> Set<String> {
         guard FileManager.default.fileExists(atPath: turnUsageStatePath.path),
               let data = try? Data(contentsOf: turnUsageStatePath),
               let state = try? JSONDecoder().decode(HookUsageStatePayload.self, from: data),
@@ -913,11 +919,12 @@ final class LimitStateReader {
         for skippedTurn in skippedTurns {
             let threadID = skippedTurn.thread_id ?? skippedTurn.session_id
             guard let threadID, !threadID.isEmpty,
-                  let turnID = skippedTurn.turn_id, !turnID.isEmpty else {
+                  let turnID = skippedTurn.turn_id, !turnID.isEmpty,
+                  let observedAtUnix = skippedTurn.observed_at else {
                 continue
             }
-            let observedAt = Date(timeIntervalSince1970: skippedTurn.observed_at ?? Date().timeIntervalSince1970)
-            guard Date().timeIntervalSince(observedAt) <= hookUsageStateMaxAge else {
+            let observedAt = Date(timeIntervalSince1970: observedAtUnix)
+            guard isCurrentUsageDate(observedAt, now: now) else {
                 continue
             }
             keys.insert(usageGroupKey(threadID: threadID, turnID: turnID, observedAt: observedAt))
@@ -925,10 +932,14 @@ final class LimitStateReader {
         return keys
     }
 
-    private func readHookUsageSummary() -> UsageSummary? {
+    private func readHookUsageSummary(now: Date) -> UsageSummary? {
         guard FileManager.default.fileExists(atPath: turnUsageSummaryPath.path),
               let data = try? Data(contentsOf: turnUsageSummaryPath),
               let payload = try? JSONDecoder().decode(HookUsageSummaryPayload.self, from: data) else {
+            return nil
+        }
+        guard let updatedAt = payload.updated_at,
+              isCurrentUsageDate(Date(timeIntervalSince1970: updatedAt), now: now) else {
             return nil
         }
 
@@ -975,7 +986,11 @@ final class LimitStateReader {
         )]
     }
 
-    private func readLimitDelta(db: OpaquePointer) -> LimitDelta? {
+    private func isCurrentUsageDate(_ date: Date, now: Date) -> Bool {
+        now.timeIntervalSince(date) <= hookUsageStateMaxAge
+    }
+
+    private func readLimitDelta(db: OpaquePointer, now: Date) -> LimitDelta? {
         let sql = """
         SELECT ts, ts_nanos, feedback_log_body
         FROM logs INDEXED BY idx_logs_ts
@@ -1000,7 +1015,9 @@ final class LimitStateReader {
             let tsNanos = sqlite3_column_int64(statement, 1)
             let observedAt = Date(timeIntervalSince1970: TimeInterval(ts) + TimeInterval(tsNanos) / 1_000_000_000.0)
             let body = String(cString: cText)
-            if let state = decodeRateLimitState(observedAt: observedAt, body: body) {
+            if let state = decodeRateLimitState(observedAt: observedAt, body: body),
+               isDisplayableLimitState(state),
+               isCurrentLimitState(state, now: now) {
                 states.append(state)
             }
         }

@@ -59,7 +59,7 @@ Use `--no-mouse-monitor` to disable global mouse event monitoring; this disables
 - Bar outlines stay visible, and a short moving gradient sweep appears on each bar after local usage-log checks, which normally run every 20 seconds.
 - Ring style uses the same color model and is drawn around the pet with fixed lower translucent readouts.
 - When `Track Turn Usage` is enabled, menu token details include a bounded-ledger `Used` rollup and recent `thread_id + turn_id` groups, with reusable `W0` through `W9` labels assigned per `thread_id`.
-- When the optional `Stop` hook is installed, turn-usage rows are merged from the hook-written state file and recent local response `usage` rows in SQLite; duplicate turns keep the record with more observed calls or token counters.
+- When the optional `Stop` hook is installed, turn-usage rows are merged from the hook-written state file and recent local response `usage` rows in SQLite; duplicate turns keep the record with more observed calls or token counters. Turn rows and hook summaries older than 24 hours are hidden instead of being shown as current usage.
 - When `Track Turn Usage` and `Show Usage Toasts` are enabled, the usage toast shows the latest goal-style `Used` token counter for a few seconds.
 - The overlay is drawn with no panel background, so only the bars/rings and text are visible.
 - Menu-driven display style, bar position offsets, and bar-width presets are saved in `UserDefaults`.

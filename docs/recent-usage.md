@@ -142,7 +142,7 @@ The hook is intentionally opt-in because it changes local Codex configuration ou
 4. Requires Codex to trust the hook command.
 5. Requires existing Codex sessions to be restarted before the new hook config is active.
 
-The app itself still works without this setup. Without the hook state file, `Track Turn Usage` shows recent local `response.completed` usage rows from SQLite. With both sources present, the app merges hook records and SQLite rows by `thread_id + turn_id` and keeps the duplicate with more observed calls or token counters.
+The app itself still works without this setup. Without the hook state file, `Track Turn Usage` shows recent local `response.completed` usage rows from SQLite. With both sources present, the app merges hook records and SQLite rows by `thread_id + turn_id` and keeps the duplicate with more observed calls or token counters. Rows and hook rollups older than 24 hours are hidden so stale token counts are not displayed as current usage.
 
 ### Hook vs SQLite Fallback
 

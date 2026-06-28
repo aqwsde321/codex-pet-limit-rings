@@ -28,6 +28,7 @@ struct LimitRingsUsageTests {
             try testLimitStateRejectsExpiredRateLimitRows()
             try testLimitStatePrefersAppServerSnapshot()
             try testSQLiteFallbackSkipsPlanModeTurns()
+            try testUsageDetailsRejectsStaleTurnUsage()
             print("limit-rings usage tests passed")
         } catch {
             fputs("limit-rings usage tests failed: \(error)\n", stderr)
@@ -235,6 +236,49 @@ struct LimitRingsUsageTests {
         try expect(normalTurn.cachedTokens == 40, "expected normal turn cached token total")
         try expect(normalTurn.outputTokens == 10, "expected normal turn output token total")
         try expect(normalTurn.effectiveTokens == 70, "expected goal-style effective token total")
+    }
+
+    private static func testUsageDetailsRejectsStaleTurnUsage() throws {
+        let fileManager = FileManager.default
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("codex-limit-rings-stale-usage-\(UUID().uuidString)", isDirectory: true)
+        try fileManager.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: root) }
+
+        let logsPath = root.appendingPathComponent("logs_2.sqlite")
+        let statePath = root.appendingPathComponent("turn-usage.json")
+        let summaryPath = root.appendingPathComponent("turn-usage-summary.json")
+        try createLogsDatabase(at: logsPath)
+
+        let staleTimestamp = Int64(Date().timeIntervalSince1970) - 2 * 24 * 60 * 60
+        try insertUsageRow(
+            logsPath: logsPath,
+            ts: staleTimestamp,
+            threadID: "thread-old-sqlite",
+            turnID: "turn-old-sqlite",
+            inputTokens: 1000,
+            cachedTokens: 200,
+            outputTokens: 50
+        )
+
+        let stateJSON = """
+        {"version":1,"records":[{"thread_id":"thread-old-hook","turn_id":"turn-old-hook","observed_at":\(Double(staleTimestamp)),"input_tokens":1000,"cached_tokens":200,"output_tokens":50}],"skipped_turns":[]}
+        """
+        try stateJSON.write(to: statePath, atomically: true, encoding: .utf8)
+
+        let summaryJSON = """
+        {"version":1,"updated_at":\(Double(staleTimestamp)),"today":{"effective_tokens":850,"turn_count":1,"call_count":1},"latest_session":{"effective_tokens":850,"turn_count":1,"call_count":1}}
+        """
+        try summaryJSON.write(to: summaryPath, atomically: true, encoding: .utf8)
+
+        let details = LimitStateReader(
+            logsPath: logsPath,
+            turnUsageStatePath: statePath,
+            turnUsageSummaryPath: summaryPath
+        ).readUsageDetails()
+
+        try expect(details.recentTurns.isEmpty, "expected stale SQLite and hook turn usage to be hidden")
+        try expect(details.summary == nil, "expected stale turn usage summary to be hidden")
     }
 
     private static func createLogsDatabase(at path: URL) throws {
