@@ -563,6 +563,7 @@ final class LimitStateReader {
         var cachedTokens: Int64
         var outputTokens: Int64
         var effectiveTokens: Int64
+        var aggregatesOlderSamples: Bool
 
         func callSummary() -> UsageCallSummary {
             UsageCallSummary(
@@ -584,9 +585,10 @@ final class LimitStateReader {
         var outputTokens: Int64
         var effectiveTokens: Int64
         var calls: [UsageCallSummary]
+        var aggregatesOlderSamples: Bool
 
         var canAggregateOlderSamples: Bool {
-            turnID != nil
+            aggregatesOlderSamples && turnID != nil
         }
 
         mutating func add(_ sample: UsageSample) {
@@ -757,8 +759,14 @@ final class LimitStateReader {
         let sql = """
         SELECT ts, ts_nanos, thread_id, feedback_log_body
         FROM logs INDEXED BY idx_logs_ts
-        WHERE target = 'codex_api::endpoint::responses_websocket'
-          AND feedback_log_body LIKE '%"usage":{"input_tokens"%'
+        WHERE (
+            target IN ('codex_api::endpoint::responses_websocket', 'log')
+            AND feedback_log_body LIKE '%"usage":{"input_tokens"%'
+        ) OR (
+            target = 'codex_core::session::turn'
+            AND feedback_log_body LIKE '%post sampling token usage turn_id=%'
+            AND feedback_log_body LIKE '%total_usage_tokens=%'
+        )
         ORDER BY ts DESC, ts_nanos DESC, id DESC
         LIMIT 400
         """
@@ -816,7 +824,8 @@ final class LimitStateReader {
                 cachedTokens: sample.cachedTokens,
                 outputTokens: sample.outputTokens,
                 effectiveTokens: sample.effectiveTokens,
-                calls: [sample.callSummary()]
+                calls: [sample.callSummary()],
+                aggregatesOlderSamples: sample.aggregatesOlderSamples
             )
         }
 
@@ -1058,27 +1067,50 @@ final class LimitStateReader {
     }
 
     private func parseUsageSample(threadID: String, observedAt: Date, body: String) -> UsageSample? {
-        guard let json = extractJSONEnvelope(from: body),
-              let data = json.data(using: .utf8),
-              let payload = try? JSONDecoder().decode(ResponseUsagePayload.self, from: data),
-              let usage = payload.resolvedUsage,
-              let inputTokens = usage.input_tokens,
-              let outputTokens = usage.output_tokens else {
-            return nil
+        if let json = extractJSONEnvelope(from: body),
+           let data = json.data(using: .utf8),
+           let payload = try? JSONDecoder().decode(ResponseUsagePayload.self, from: data),
+           let usage = payload.resolvedUsage,
+           let inputTokens = usage.input_tokens,
+           let outputTokens = usage.output_tokens {
+            let cachedTokens = usage.input_tokens_details?.cached_tokens ?? 0
+            return UsageSample(
+                threadID: threadID,
+                turnID: parseDelimitedValue(after: "turn_id=", in: body)
+                    ?? parseDelimitedValue(after: "turn.id=", in: body)
+                    ?? parseDelimitedValue(after: "submission.id=", in: body),
+                observedAt: observedAt,
+                inputTokens: inputTokens,
+                cachedTokens: cachedTokens,
+                outputTokens: outputTokens,
+                effectiveTokens: goalEffectiveTokens(inputTokens: inputTokens, cachedTokens: cachedTokens, outputTokens: outputTokens),
+                aggregatesOlderSamples: true
+            )
         }
 
-        let cachedTokens = usage.input_tokens_details?.cached_tokens ?? 0
+        guard body.contains("post sampling token usage"),
+              let totalTokens = parseInt64(after: "total_usage_tokens=", in: body) else {
+            return nil
+        }
         return UsageSample(
             threadID: threadID,
             turnID: parseDelimitedValue(after: "turn_id=", in: body)
                 ?? parseDelimitedValue(after: "turn.id=", in: body)
                 ?? parseDelimitedValue(after: "submission.id=", in: body),
             observedAt: observedAt,
-            inputTokens: inputTokens,
-            cachedTokens: cachedTokens,
-            outputTokens: outputTokens,
-            effectiveTokens: goalEffectiveTokens(inputTokens: inputTokens, cachedTokens: cachedTokens, outputTokens: outputTokens)
+            inputTokens: totalTokens,
+            cachedTokens: 0,
+            outputTokens: 0,
+            effectiveTokens: totalTokens,
+            aggregatesOlderSamples: false
         )
+    }
+
+    private func parseInt64(after marker: String, in body: String) -> Int64? {
+        guard let value = parseDelimitedValue(after: marker, in: body) else {
+            return nil
+        }
+        return Int64(value)
     }
 
     private func parseDelimitedValue(after marker: String, in body: String) -> String? {

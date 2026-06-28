@@ -29,6 +29,8 @@ struct LimitRingsUsageTests {
             try testLimitStatePrefersAppServerSnapshot()
             try testSQLiteFallbackSkipsPlanModeTurns()
             try testUsageDetailsRejectsStaleTurnUsage()
+            try testSQLiteFallbackReadsLogTargetUsageRows()
+            try testSQLiteFallbackReadsPostSamplingUsageRows()
             print("limit-rings usage tests passed")
         } catch {
             fputs("limit-rings usage tests failed: \(error)\n", stderr)
@@ -281,6 +283,89 @@ struct LimitRingsUsageTests {
         try expect(details.summary == nil, "expected stale turn usage summary to be hidden")
     }
 
+    private static func testSQLiteFallbackReadsLogTargetUsageRows() throws {
+        let fileManager = FileManager.default
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("codex-limit-rings-log-target-usage-\(UUID().uuidString)", isDirectory: true)
+        try fileManager.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: root) }
+
+        let logsPath = root.appendingPathComponent("logs_2.sqlite")
+        let statePath = root.appendingPathComponent("turn-usage.json")
+        let summaryPath = root.appendingPathComponent("turn-usage-summary.json")
+        try createLogsDatabase(at: logsPath)
+
+        let now = Int64(Date().timeIntervalSince1970)
+        try insertUsageRow(
+            logsPath: logsPath,
+            ts: now,
+            target: "log",
+            threadID: "thread-log",
+            turnID: "turn-log",
+            inputTokens: 1200,
+            cachedTokens: 200,
+            outputTokens: 80
+        )
+
+        let details = LimitStateReader(
+            logsPath: logsPath,
+            turnUsageStatePath: statePath,
+            turnUsageSummaryPath: summaryPath
+        ).readUsageDetails()
+
+        let turn = try unwrap(details.recentTurns.first, "expected log target usage row to be read")
+        try expect(turn.threadID == "thread-log", "expected log target usage row thread id")
+        try expect(turn.turnID == "turn-log", "expected log target usage row turn id")
+        try expect(turn.inputTokens == 1200, "expected log target input token total")
+        try expect(turn.cachedTokens == 200, "expected log target cached token total")
+        try expect(turn.outputTokens == 80, "expected log target output token total")
+        try expect(turn.effectiveTokens == 1080, "expected log target effective token total")
+    }
+
+    private static func testSQLiteFallbackReadsPostSamplingUsageRows() throws {
+        let fileManager = FileManager.default
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("codex-limit-rings-post-sampling-usage-\(UUID().uuidString)", isDirectory: true)
+        try fileManager.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: root) }
+
+        let logsPath = root.appendingPathComponent("logs_2.sqlite")
+        let statePath = root.appendingPathComponent("turn-usage.json")
+        let summaryPath = root.appendingPathComponent("turn-usage-summary.json")
+        try createLogsDatabase(at: logsPath)
+
+        let now = Int64(Date().timeIntervalSince1970)
+        try insertPostSamplingUsageRow(
+            logsPath: logsPath,
+            ts: now - 1,
+            threadID: "thread-post",
+            turnID: "turn-post",
+            totalTokens: 1000
+        )
+        try insertPostSamplingUsageRow(
+            logsPath: logsPath,
+            ts: now,
+            threadID: "thread-post",
+            turnID: "turn-post",
+            totalTokens: 1500
+        )
+
+        let details = LimitStateReader(
+            logsPath: logsPath,
+            turnUsageStatePath: statePath,
+            turnUsageSummaryPath: summaryPath
+        ).readUsageDetails()
+
+        let turn = try unwrap(details.recentTurns.first, "expected post sampling usage row to be read")
+        try expect(turn.threadID == "thread-post", "expected post sampling thread id")
+        try expect(turn.turnID == "turn-post", "expected post sampling turn id")
+        try expect(turn.inputTokens == 1500, "expected latest post sampling total as input tokens")
+        try expect(turn.cachedTokens == 0, "expected post sampling cached tokens to default to zero")
+        try expect(turn.outputTokens == 0, "expected post sampling output tokens to default to zero")
+        try expect(turn.effectiveTokens == 1500, "expected latest post sampling effective token total")
+        try expect(turn.callCount == 1, "expected cumulative post sampling rows not to be summed")
+    }
+
     private static func createLogsDatabase(at path: URL) throws {
         var db: OpaquePointer?
         guard sqlite3_open(path.path, &db) == SQLITE_OK, let db else {
@@ -342,13 +427,58 @@ struct LimitRingsUsageTests {
         cachedTokens: Int64,
         outputTokens: Int64
     ) throws {
+        try insertUsageRow(
+            logsPath: logsPath,
+            ts: ts,
+            target: "codex_api::endpoint::responses_websocket",
+            threadID: threadID,
+            turnID: turnID,
+            inputTokens: inputTokens,
+            cachedTokens: cachedTokens,
+            outputTokens: outputTokens
+        )
+    }
+
+    private static func insertUsageRow(
+        logsPath: URL,
+        ts: Int64,
+        target: String,
+        threadID: String,
+        turnID: String,
+        inputTokens: Int64,
+        cachedTokens: Int64,
+        outputTokens: Int64
+    ) throws {
         let body = """
-        turn_id=\(turnID) websocket event: {"type":"response.completed","usage":{"input_tokens":\(inputTokens),"input_tokens_details":{"cached_tokens":\(cachedTokens)},"output_tokens":\(outputTokens)}}
+        turn_id=\(turnID) Received message {"type":"response.completed","response":{"usage":{"input_tokens":\(inputTokens),"input_tokens_details":{"cached_tokens":\(cachedTokens)},"output_tokens":\(outputTokens)}}}
         """
-        try insertLogRow(logsPath: logsPath, ts: ts, threadID: threadID, body: body)
+        try insertLogRow(logsPath: logsPath, ts: ts, target: target, threadID: threadID, body: body)
+    }
+
+    private static func insertPostSamplingUsageRow(
+        logsPath: URL,
+        ts: Int64,
+        threadID: String,
+        turnID: String,
+        totalTokens: Int64
+    ) throws {
+        let body = """
+        session_loop{thread_id=\(threadID)}:submission_dispatch{otel.name="op.dispatch.user_input" submission.id="submission-\(turnID)" codex.op="user_input"}:turn{otel.name="session_task.turn" thread.id=\(threadID) turn.id=\(turnID) model=gpt-5.5}:session_task.run:run_turn: post sampling token usage turn_id=\(turnID) total_usage_tokens=\(totalTokens) auto_compact_scope_tokens=\(totalTokens)
+        """
+        try insertLogRow(logsPath: logsPath, ts: ts, target: "codex_core::session::turn", threadID: threadID, body: body)
     }
 
     private static func insertLogRow(logsPath: URL, ts: Int64, threadID: String, body: String) throws {
+        try insertLogRow(
+            logsPath: logsPath,
+            ts: ts,
+            target: "codex_api::endpoint::responses_websocket",
+            threadID: threadID,
+            body: body
+        )
+    }
+
+    private static func insertLogRow(logsPath: URL, ts: Int64, target: String, threadID: String, body: String) throws {
         var db: OpaquePointer?
         guard sqlite3_open(logsPath.path, &db) == SQLITE_OK, let db else {
             throw LimitRingsUsageTestError.sqlite("could not open sqlite database")
@@ -357,7 +487,7 @@ struct LimitRingsUsageTests {
 
         let sql = """
         INSERT INTO logs (ts, ts_nanos, thread_id, target, feedback_log_body)
-        VALUES (?, 0, ?, 'codex_api::endpoint::responses_websocket', ?)
+        VALUES (?, 0, ?, ?, ?)
         """
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK, let statement else {
@@ -367,7 +497,8 @@ struct LimitRingsUsageTests {
 
         sqlite3_bind_int64(statement, 1, ts)
         sqlite3_bind_text(statement, 2, threadID, -1, sqliteTransient)
-        sqlite3_bind_text(statement, 3, body, -1, sqliteTransient)
+        sqlite3_bind_text(statement, 3, target, -1, sqliteTransient)
+        sqlite3_bind_text(statement, 4, body, -1, sqliteTransient)
         guard sqlite3_step(statement) == SQLITE_DONE else {
             throw LimitRingsUsageTestError.sqlite("could not insert log row")
         }
