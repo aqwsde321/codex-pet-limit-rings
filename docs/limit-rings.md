@@ -15,6 +15,7 @@ The usage overlay is pet-agnostic. It works with any pet Codex displays because 
 - In bar style, `Position` uses an inline menu control so position buttons can be clicked repeatedly without reopening the menu. It moves only the bar readouts; turn-usage toasts stay anchored near the pet like ring-style toasts.
 - In bar style, `Bar Width` switches between short, normal, and wide bars. Bar-only controls are hidden in ring style.
 - The menu summary includes the source and age of the current rate-limit snapshot.
+- A transient app-server failure keeps the last successful snapshot for up to 30 minutes while its reset window remains current; the menu labels this source `Cached`.
 - Expired rate-limit events are treated as unavailable instead of being shown as current usage.
 - When no current rate-limit event is available, the overlay shows compact `NO DATA` text instead of stale percentages.
 - When `Track Turn Usage` is enabled, the menu shows compact color-coded usage-token counts for up to three recent turn groups.
@@ -44,6 +45,8 @@ The app reads the current Codex rate-limit snapshot first, then falls back to lo
 - `~/.codex/codex-pet-limit-rings/turn-usage-ledger.json`: optional bounded per-turn ledger written by the opt-in `Stop` hook, used to avoid duplicate summary accumulation.
 - `~/.codex/codex-pet-limit-rings/turn-usage-summary.json`: optional ledger rollup written by the opt-in `Stop` hook, containing today's and the latest session's token totals.
 - `~/.codex/codex-pet-limit-rings/turn-usage-hook.log`: optional bounded hook diagnostic log with hook status, timestamps, ids, mode kind when detected, Plan mode skip markers, and call counts.
+
+For rate limits, the fallback order is app-server, a current SQLite `codex.rate_limits` event, then the last successful app-server snapshot when it is no older than 30 minutes and its reset window is still current. Only then does the overlay show `NO DATA`.
 
 The app watches `~/.codex/.codex-global-state.json` with a macOS file event source, so pet open/close and position writes trigger an immediate frame update. A slow frame timer remains as a fallback in case the file is replaced or an event is missed.
 

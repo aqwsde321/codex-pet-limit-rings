@@ -28,6 +28,8 @@ struct LimitRingsUsageTests {
             try testLimitStateSkipsInvalidRateLimitRows()
             try testLimitStateRejectsExpiredRateLimitRows()
             try testLimitStatePrefersAppServerSnapshot()
+            try testLimitStateKeepsRecentAppServerSnapshotDuringTransientFailure()
+            try testLimitStateRejectsExpiredCachedAppServerSnapshot()
             try testSQLiteFallbackSkipsPlanModeTurns()
             try testUsageDetailsRejectsStaleTurnUsage()
             try testSQLiteFallbackReadsLogTargetUsageRows()
@@ -185,6 +187,76 @@ struct LimitRingsUsageTests {
         try expect(state.primary?.remainingPercent == 90, "expected app-server primary value to override log fallback")
         try expect(state.secondary?.remainingPercent == 47, "expected app-server secondary value to override log fallback")
         try expect(state.source == "app-server", "expected app-server source")
+    }
+
+    private static func testLimitStateKeepsRecentAppServerSnapshotDuringTransientFailure() throws {
+        let fileManager = FileManager.default
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("codex-limit-rings-app-server-cache-\(UUID().uuidString)", isDirectory: true)
+        try fileManager.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: root) }
+
+        let logsPath = root.appendingPathComponent("logs_2.sqlite")
+        try createLogsDatabase(at: logsPath)
+
+        let now = Date()
+        var nextState: LimitState? = LimitState(
+            planType: "pro",
+            primary: LimitBucket(usedPercent: 12, windowMinutes: 300, resetAt: now.addingTimeInterval(3600).timeIntervalSince1970),
+            secondary: LimitBucket(usedPercent: 34, windowMinutes: 10080, resetAt: now.addingTimeInterval(604800).timeIntervalSince1970),
+            additional: [],
+            observedAt: now,
+            source: "app-server"
+        )
+        let reader = LimitStateReader(
+            logsPath: logsPath,
+            turnUsageStatePath: root.appendingPathComponent("turn-usage.json"),
+            turnUsageSummaryPath: root.appendingPathComponent("turn-usage-summary.json"),
+            appServerStateProvider: { nextState }
+        )
+
+        _ = reader.readLatest()
+        nextState = nil
+        let cached = reader.readLatest()
+
+        try expect(cached.primary?.remainingPercent == 88, "expected recent primary snapshot during transient failure")
+        try expect(cached.secondary?.remainingPercent == 66, "expected recent secondary snapshot during transient failure")
+        try expect(cached.source == "cached", "expected cached source during transient failure")
+    }
+
+    private static func testLimitStateRejectsExpiredCachedAppServerSnapshot() throws {
+        let fileManager = FileManager.default
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("codex-limit-rings-expired-app-server-cache-\(UUID().uuidString)", isDirectory: true)
+        try fileManager.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: root) }
+
+        let logsPath = root.appendingPathComponent("logs_2.sqlite")
+        try createLogsDatabase(at: logsPath)
+
+        let now = Date()
+        let cacheMaxAge: TimeInterval = 30 * 60
+        var nextState: LimitState? = LimitState(
+            planType: "pro",
+            primary: LimitBucket(usedPercent: 12, windowMinutes: 300, resetAt: now.addingTimeInterval(3600).timeIntervalSince1970),
+            secondary: nil,
+            additional: [],
+            observedAt: now.addingTimeInterval(-cacheMaxAge - 1),
+            source: "app-server"
+        )
+        let reader = LimitStateReader(
+            logsPath: logsPath,
+            turnUsageStatePath: root.appendingPathComponent("turn-usage.json"),
+            turnUsageSummaryPath: root.appendingPathComponent("turn-usage-summary.json"),
+            appServerStateProvider: { nextState }
+        )
+
+        _ = reader.readLatest()
+        nextState = nil
+        let expired = reader.readLatest()
+
+        try expect(expired.primary == nil, "expected expired app-server cache to be discarded")
+        try expect(expired.source == "none", "expected no cached source after cache expiry")
     }
 
     private static func testSQLiteFallbackSkipsPlanModeTurns() throws {

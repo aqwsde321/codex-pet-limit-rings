@@ -558,6 +558,7 @@ final class LimitStateReader {
     private let turnUsageStatePath: URL
     private let turnUsageSummaryPath: URL
     private let appServerStateProvider: (() -> LimitState?)?
+    private var lastAppServerState: LimitState?
 
     private struct UsageSample {
         var threadID: String
@@ -640,9 +641,21 @@ final class LimitStateReader {
 
     func readLatest() -> LimitState {
         if let state = appServerStateProvider?() {
+            lastAppServerState = state
             return state
         }
-        return readLatestLog()
+        let logState = readLatestLog()
+        if isDisplayableLimitState(logState) {
+            return logState
+        }
+        let now = Date()
+        if var cached = lastAppServerState,
+           now.timeIntervalSince(cached.observedAt) <= limitStateFallbackMaxAge,
+           isCurrentLimitState(cached, now: now) {
+            cached.source = "cached"
+            return cached
+        }
+        return logState
     }
 
     func readUsageDetails() -> UsageDetails {
