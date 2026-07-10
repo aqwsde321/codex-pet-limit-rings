@@ -67,6 +67,7 @@ Install Codex Pet Limit Rings for me. Recommend the simplest setup first, ask be
 - [skills/codex-pet-limit-rings/SKILL.md](skills/codex-pet-limit-rings/SKILL.md): 설치/검증 워크플로
 - [docs/limit-rings.md](docs/limit-rings.md): 데이터와 렌더링 모델
 - [docs/recent-usage.md](docs/recent-usage.md): 턴 사용량 표시 의미
+- [docs/solutions/workflow-issues/usage-overlay-no-data-diagnosis.md](docs/solutions/workflow-issues/usage-overlay-no-data-diagnosis.md): Codex 업데이트 후 overlay 미표시 진단 순서
 
 스킬을 로컬 Codex에 설치하려면:
 

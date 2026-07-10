@@ -1,6 +1,6 @@
 ---
 name: codex-pet-limit-rings
-description: Install, run, customize, package, or debug the Codex Pet Limit Rings macOS companion app for Codex pets. Use when the user asks for Codex pet usage-limit bars or rings, a menu-bar toggle, launch-at-login packaging, live/cached Codex limit visualization, or open-source distribution of the pet usage overlay.
+description: Install, run, customize, package, or debug the Codex Pet Limit Rings macOS companion app for Codex pets. Use when the user asks for Codex pet usage-limit bars or rings, a menu-bar toggle, launch-at-login packaging, live/cached Codex limit visualization, overlay NO DATA or missing usage after a Codex update, or open-source distribution of the pet usage overlay.
 ---
 
 # Codex Pet Limit Rings
@@ -93,12 +93,17 @@ pgrep -fl CodexPetLimitRings
 launchctl print "gui/$(id -u)/com.codex-pet.limit-rings" >/dev/null
 ```
 
+## Update Regression Diagnosis
+
+When rings or bars stop showing remaining usage after a Codex update, read `docs/solutions/workflow-issues/usage-overlay-no-data-diagnosis.md` from the project root and follow its evidence order. Separate the rate-limit overlay from the optional Stop hook, verify CLI resolution in the LaunchAgent environment, test app-server with stdin kept open, then inspect the active SQLite fallback. Do not infer an API change from a pipe that closes app-server stdin before its asynchronous response.
+
 ## Data Contract
 
 The rings read:
 
+- Codex CLI `app-server --stdio` for the current `account/rateLimits/read` snapshot. Resolve explicit environment overrides, Codex app-bundle paths, and standard Homebrew paths because LaunchAgent PATH may omit Homebrew.
 - `~/.codex/.codex-global-state.json` for `electron-avatar-overlay-open` and `electron-avatar-overlay-bounds.mascot`.
-- `~/.codex/logs_2.sqlite` for the newest local websocket `codex.rate_limits` event and recent response `usage` token counters from `target = 'codex_api::endpoint::responses_websocket'`.
+- `~/.codex/sqlite/logs_2.sqlite` or legacy `~/.codex/logs_2.sqlite` for the newest local websocket `codex.rate_limits` fallback and recent response `usage` token counters.
 - `~/.codex/sessions/**/rollout-*.jsonl` for the optional `Stop` hook worker to read a turn's `collaboration_mode_kind` and skip Plan mode turns like Codex goal accounting.
 - `~/.codex/codex-pet-limit-rings/settings.json` for the app-written `Track Turn Usage` setting. The optional hook should no-op when this setting is off or missing.
 - `~/.codex/codex-pet-limit-rings/turn-usage-queue.jsonl` when the optional `Stop` hook is installed. This bounded queue should contain only ids, the local transcript path when Codex provides one, enqueue timestamps, and retry counters, and the hook should return immediately after enqueueing.

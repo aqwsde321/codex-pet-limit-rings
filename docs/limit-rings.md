@@ -33,7 +33,7 @@ The usage overlay is pet-agnostic. It works with any pet Codex displays because 
 
 The app reads the current Codex rate-limit snapshot first, then falls back to local Codex files:
 
-- `/Applications/Codex.app/Contents/Resources/codex app-server --stdio`: current account limit snapshot via `account/rateLimits/read`. The `codex` limit is rendered as the main short-window and weekly rings; other limit ids are shown as additional model dots.
+- Codex CLI `app-server --stdio`: current account limit snapshot via `account/rateLimits/read`. The app checks explicit environment overrides, Codex app-bundle paths, and standard Homebrew paths. The `codex` limit is rendered as the main short-window and weekly rings; other limit ids are shown as additional model dots.
 - `~/.codex/.codex-global-state.json`: current pet bounds, using `electron-avatar-overlay-bounds.mascot`.
 - `electron-avatar-overlay-open` in the same state file: whether the Codex pet is currently open.
 - `~/.codex/sqlite/logs_2.sqlite` or legacy `~/.codex/logs_2.sqlite`: fallback rate-limit source using the newest unexpired websocket `codex.rate_limits` event, plus recent response `usage` token counters from `target = 'codex_api::endpoint::responses_websocket'`.
@@ -65,6 +65,8 @@ Use `--no-mouse-monitor` to disable global mouse event monitoring; this disables
 - Menu-driven display style, bar position offsets, and bar-width presets are saved in `UserDefaults`.
 
 See `docs/recent-usage.md` for the token-counter menu semantics, raw counter inspection, window-slot labels, turn grouping, and limit-delta caveats.
+
+See `docs/solutions/workflow-issues/usage-overlay-no-data-diagnosis.md` for the evidence-first diagnosis sequence after a Codex update.
 
 ## Install Contract
 

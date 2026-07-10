@@ -24,6 +24,7 @@ struct LimitRingsUsageTests {
         do {
             try testDefaultLogsPathPrefersActiveSQLiteDirectory()
             try testDefaultLogsPathFallsBackToLegacyLogsPath()
+            try testDefaultCodexCLIPathsIncludeHomebrewLocations()
             try testLimitStateSkipsInvalidRateLimitRows()
             try testLimitStateRejectsExpiredRateLimitRows()
             try testLimitStatePrefersAppServerSnapshot()
@@ -80,6 +81,16 @@ struct LimitRingsUsageTests {
             defaultLogsPath(codexHome: root).path == legacyLogsPath.path,
             "expected legacy logs_2 path to remain supported"
         )
+    }
+
+    private static func testDefaultCodexCLIPathsIncludeHomebrewLocations() throws {
+        let paths = defaultCodexCLIPaths(
+            home: URL(fileURLWithPath: "/Users/tester"),
+            environment: [:]
+        )
+
+        try expect(paths.contains("/opt/homebrew/bin/codex"), "expected Apple Silicon Homebrew Codex CLI path")
+        try expect(paths.contains("/usr/local/bin/codex"), "expected Intel Homebrew Codex CLI path")
     }
 
     private static func testLimitStateSkipsInvalidRateLimitRows() throws {

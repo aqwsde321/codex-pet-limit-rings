@@ -376,6 +376,17 @@ private struct AppServerRateLimitWindow: Decodable {
     }
 }
 
+func defaultCodexCLIPaths(home: URL, environment: [String: String]) -> [String] {
+    [
+        environment["CODEX_PET_LIMIT_RINGS_CODEX_CLI"],
+        environment["CODEX_CLI"],
+        "/Applications/Codex.app/Contents/Resources/codex",
+        home.appendingPathComponent("Applications/Codex.app/Contents/Resources/codex").path,
+        "/opt/homebrew/bin/codex",
+        "/usr/local/bin/codex"
+    ].compactMap { $0 }
+}
+
 private final class AppServerLimitStateReader {
     private let codexHome: URL
     private var lastFailureAt: Date?
@@ -494,14 +505,7 @@ private final class AppServerLimitStateReader {
     private func findCodexCLI() -> URL? {
         let home = FileManager.default.homeDirectoryForCurrentUser
         let environment = ProcessInfo.processInfo.environment
-        let candidates: [String?] = [
-            environment["CODEX_PET_LIMIT_RINGS_CODEX_CLI"],
-            environment["CODEX_CLI"],
-            "/Applications/Codex.app/Contents/Resources/codex",
-            home.appendingPathComponent("Applications/Codex.app/Contents/Resources/codex").path
-        ]
-
-        return candidates.compactMap { $0 }.map { URL(fileURLWithPath: $0) }.first {
+        return defaultCodexCLIPaths(home: home, environment: environment).map { URL(fileURLWithPath: $0) }.first {
             FileManager.default.isExecutableFile(atPath: $0.path)
         }
     }
