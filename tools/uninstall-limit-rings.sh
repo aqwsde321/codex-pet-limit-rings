@@ -23,6 +23,9 @@ if [[ "$OLD_APP" != "$DEFAULT_OLD_APP" ]]; then
   exit 2
 fi
 
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+"$ROOT/tools/cleanup-legacy-turn-usage.sh"
+
 launchctl bootout "$GUI_TARGET" "$AGENT" >/dev/null 2>&1 || true
 launchctl bootout "$GUI_TARGET" "$OLD_AGENT" >/dev/null 2>&1 || true
 pkill -TERM -f "$BIN" >/dev/null 2>&1 || true
@@ -36,6 +39,8 @@ rm -rf "$OLD_APP"
 defaults delete local.codex.pet-limit-rings CodexPetLimitRings.ringsVisible >/dev/null 2>&1 || true
 defaults delete local.codex.pet-limit-rings CodexPetLimitRings.barsOffsetX >/dev/null 2>&1 || true
 defaults delete local.codex.pet-limit-rings CodexPetLimitRings.barsOffsetY >/dev/null 2>&1 || true
+defaults delete local.codex.pet-limit-rings CodexPetLimitRings.ringsOffsetX >/dev/null 2>&1 || true
+defaults delete local.codex.pet-limit-rings CodexPetLimitRings.ringsOffsetY >/dev/null 2>&1 || true
 defaults delete local.codex.pet-limit-rings CodexPetLimitRings.barWidthPreset >/dev/null 2>&1 || true
 defaults delete local.codex.pet-limit-rings CodexPetLimitRings.displayStyle >/dev/null 2>&1 || true
 defaults delete local.codex.limit-aura CodexLimitAura.ringsVisible >/dev/null 2>&1 || true

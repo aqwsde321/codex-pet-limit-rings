@@ -4,10 +4,14 @@ Notable changes to `codex-pet-limit-rings` are recorded here.
 
 ## Unreleased
 
+### Removed
+
+- 턴별 토큰 추적, 최근 턴 메뉴, 한도 변화량, 사용량 토스트와 선택형 Stop hook 설치기를 제거했습니다.
+
 ### Added
 
-- Menu controls can move the usage bars relative to the pet, reset the position, and choose short, normal, or wide bar widths.
-- Position controls stay open for repeated clicks while nudging the usage bars.
+- 링과 바 위치를 메뉴에서 이동·초기화할 수 있고, 각 위치는 별도로 저장됩니다. 위치 컨트롤은 반복 조정 중 메뉴를 열린 상태로 유지합니다.
+- 바 너비를 짧게, 보통, 넓게 중 하나로 선택할 수 있습니다.
 - Bar outlines stay visible, and a short moving gradient sweep appears on each bar after local usage-log checks.
 - Usage bars now show reset countdowns beneath the remaining percentage when reset data is available.
 

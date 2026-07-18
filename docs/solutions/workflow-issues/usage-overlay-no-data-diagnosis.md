@@ -16,15 +16,13 @@ related_files:
 
 ## Problem
 
-Codex 업데이트 후 링·바에 5시간/주간 남은 사용량이 표시되지 않을 수 있다. 이 값은 최근 턴 토큰을 수집하는 선택 Stop hook과 무관하다. rate-limit overlay는 Codex app-server snapshot을 먼저 읽고, 실패하면 SQLite의 `codex.rate_limits` 이벤트를 사용한다.
+Codex 업데이트 뒤 앱은 실행 중이지만 링·바가 `NO DATA`를 표시했다. rate-limit 공급 경로인 app-server와 SQLite fallback을 분리해 조사해야 했다.
 
 ## Diagnosis Order
 
 ### 1. 증상 범위를 분리한다
 
 - 링·바의 남은 퍼센트가 없으면 rate-limit snapshot 경로를 조사한다.
-- 최근 턴 토큰, toast, `turn-usage.json`만 없으면 Stop hook 경로를 조사한다.
-- 링·바 문제를 hook 활성화 상태로 설명하지 않는다.
 
 Codex 자체 usage 화면에 값이 있으면 이를 기대값으로 기록한다. 예를 들어 Codex 화면의 `99% 남음`은 app-server의 `usedPercent: 1`과 대응한다.
 
@@ -146,7 +144,6 @@ launchctl print "gui/$(id -u)/com.codex-pet.limit-rings"
 
 ## Reuse Checklist
 
-- 링·바 문제와 Stop hook 문제를 분리했는가?
 - Codex 자체 usage 화면의 기대 퍼센트를 기록했는가?
 - 실행 중 설치본이 최신인가?
 - LaunchAgent 환경에서 실제 Codex CLI 후보가 실행 가능한가?

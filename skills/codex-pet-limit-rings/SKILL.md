@@ -28,9 +28,7 @@ Use that checkout as the working directory. Read `AGENTS.md` first if it exists.
 When a user asks to install or set this up, recommend the smallest useful setup first:
 
 - Default recommendation: install only the overlay app.
-- Ask before installing the optional `Stop` hook. Enable it only when the user wants recent-turn usage, menu usage details, or usage toasts.
 - Ask before installing this skill into local Codex. Enable it only when the user wants to reuse this workflow from other Codex conversations.
-- If the user explicitly asks for everything, install the overlay app, optional turn-usage hook, and skill.
 
 Install or enable the usage overlay for a user:
 
@@ -42,18 +40,6 @@ Install without requiring the user to clone this repository:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/aqwsde321/codex-pet-limit-rings/main/tools/install-remote.sh | bash
-```
-
-Install everything without requiring a clone:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/aqwsde321/codex-pet-limit-rings/main/tools/install-remote.sh | bash -s -- --with-turn-usage --with-skill
-```
-
-Install the optional Codex `Stop` hook for finalized turn-usage tracking:
-
-```bash
-tools/install-turn-usage-hook.sh
 ```
 
 Run a development build without installing a login item:
@@ -74,12 +60,6 @@ Uninstall without requiring a clone:
 curl -fsSL https://raw.githubusercontent.com/aqwsde321/codex-pet-limit-rings/main/tools/install-remote.sh | bash -s -- --uninstall
 ```
 
-Remove only the optional turn-usage hook:
-
-```bash
-tools/uninstall-turn-usage-hook.sh
-```
-
 Install this skill into local Codex:
 
 ```bash
@@ -93,9 +73,9 @@ pgrep -fl CodexPetLimitRings
 launchctl print "gui/$(id -u)/com.codex-pet.limit-rings" >/dev/null
 ```
 
-## Update Regression Diagnosis
+## 업데이트 회귀 진단
 
-When rings or bars stop showing remaining usage after a Codex update, read `docs/solutions/workflow-issues/usage-overlay-no-data-diagnosis.md` from the project root and follow its evidence order. Separate the rate-limit overlay from the optional Stop hook, verify CLI resolution in the LaunchAgent environment, test app-server with stdin kept open, then inspect the active SQLite fallback. Do not infer an API change from a pipe that closes app-server stdin before its asynchronous response.
+Codex 업데이트 후 오버레이가 `NO DATA`를 표시하면 설치된 바이너리를 먼저 확인합니다. 다음으로 `codex app-server --stdio`의 `account/rateLimits/read`와 활성 SQLite 로그의 최신 `codex.rate_limits` 행을 각각 검증하고, 실패한 경로만 수정합니다. 저장소 작업에서는 `docs/solutions/workflow-issues/usage-overlay-no-data-diagnosis.md`를 참고합니다.
 
 ## Data Contract
 
@@ -103,15 +83,8 @@ The rings read:
 
 - Codex CLI `app-server --stdio` for the current `account/rateLimits/read` snapshot. Resolve explicit environment overrides, Codex app-bundle paths, and standard Homebrew paths because LaunchAgent PATH may omit Homebrew.
 - `~/.codex/.codex-global-state.json` for `electron-avatar-overlay-open` and `electron-avatar-overlay-bounds.mascot`.
-- `~/.codex/sqlite/logs_2.sqlite` or legacy `~/.codex/logs_2.sqlite` for the newest local websocket `codex.rate_limits` fallback and recent response `usage` token counters.
-- `~/.codex/sessions/**/rollout-*.jsonl` for the optional `Stop` hook worker to read a turn's `collaboration_mode_kind` and skip Plan mode turns like Codex goal accounting.
-- `~/.codex/codex-pet-limit-rings/settings.json` for the app-written `Track Turn Usage` setting. The optional hook should no-op when this setting is off or missing.
-- `~/.codex/codex-pet-limit-rings/turn-usage-queue.jsonl` when the optional `Stop` hook is installed. This bounded queue should contain only ids, the local transcript path when Codex provides one, enqueue timestamps, and retry counters, and the hook should return immediately after enqueueing.
-- `~/.codex/codex-pet-limit-rings/turn-usage.json` when the optional `Stop` hook is installed. This compact state file should contain only ids, Plan mode skip markers, response ids when present, timestamps, call counts, and token counters, not prompt or tool-output text.
-- `~/.codex/codex-pet-limit-rings/turn-usage-ledger.json` when the optional `Stop` hook is installed. This bounded ledger should contain only per-turn ids, timestamps, call counts, and token counters.
-- `~/.codex/codex-pet-limit-rings/turn-usage-summary.json` when the optional `Stop` hook is installed. This compact rollup should contain only bounded-ledger token totals for today and the latest session.
+- `~/.codex/sqlite/logs_2.sqlite` 또는 legacy `~/.codex/logs_2.sqlite`에서 최신 로컬 websocket `codex.rate_limits` fallback을 읽습니다.
 
-The app should not read `~/.codex/auth.json` or call a remote usage endpoint. The top usage bar or outer ring is the short-window remaining percentage. The bottom usage bar or inner ring is the weekly remaining percentage. The menu summary should say `Local` and include the local log age when the local log value is active. The menu can show recent per-thread usage token counts and the latest limit delta, and the overlay can show a short toast for newly observed turn usage. Display style, position offsets, and bar-width presets are controlled from the menu and persisted in `UserDefaults`.
 
 Pet wakeups and moves are driven by a filesystem watcher on `~/.codex/.codex-global-state.json`, with a slow fallback timer for missed events. Keep that event-driven path intact when changing frame-following behavior.
 Use `--no-mouse-monitor` when the user wants no global mouse event monitoring; this disables drag-follow while the usage overlay remains visible. Set `CODEX_PET_LIMIT_RINGS_NO_MOUSE_MONITOR=1` for helper-script launches or installs.
@@ -128,6 +101,7 @@ When changing behavior or visuals:
 bash -n tools/*.sh
 swiftc tools/codex-pet-limit-rings.swift -o tmp/codex-pet-limit-rings -framework AppKit -lsqlite3
 tmp/codex-pet-limit-rings --preview tmp/limit-rings-preview.png --size 164
+tools/test-cleanup-legacy-turn-usage.sh
 ```
 
 4. Relaunch with `tools/run-limit-rings.sh` for development or `tools/install-limit-rings.sh` for the packaged login-item flow.

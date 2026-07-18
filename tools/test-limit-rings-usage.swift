@@ -30,15 +30,73 @@ struct LimitRingsUsageTests {
             try testLimitStatePrefersAppServerSnapshot()
             try testLimitStateKeepsRecentAppServerSnapshotDuringTransientFailure()
             try testLimitStateRejectsExpiredCachedAppServerSnapshot()
-            try testSQLiteFallbackSkipsPlanModeTurns()
-            try testUsageDetailsRejectsStaleTurnUsage()
-            try testSQLiteFallbackReadsLogTargetUsageRows()
-            try testSQLiteFallbackReadsPostSamplingUsageRows()
+            try testUsagePositionAdjustment()
+            try testUsageStyleOffsetsStayIndependent()
+            try testUsageRingPositionCoordinates()
             print("limit-rings usage tests passed")
         } catch {
             fputs("limit-rings usage tests failed: \(error)\n", stderr)
             exit(1)
         }
+    }
+
+    private static func testUsagePositionAdjustment() throws {
+        let origin = CGSize(width: 8, height: -4)
+        try expect(
+            adjustedUsageOffset(origin, action: .left) == CGSize(width: 4, height: -4),
+            "expected left adjustment to move four points"
+        )
+        try expect(
+            adjustedUsageOffset(origin, action: .up) == CGSize(width: 8, height: -8),
+            "expected up adjustment to move four points"
+        )
+        try expect(
+            adjustedUsageOffset(origin, action: .reset) == .zero,
+            "expected reset adjustment to clear the active style offset"
+        )
+    }
+
+    private static func testUsageStyleOffsetsStayIndependent() throws {
+        let barOffset = CGSize(width: 8, height: -4)
+        let ringOffset = CGSize(width: -12, height: 16)
+        let movedRing = adjustedUsageOffsets(
+            barOffset: barOffset,
+            ringOffset: ringOffset,
+            displayStyle: .rings,
+            action: .right
+        )
+        try expect(movedRing.bar == barOffset, "expected ring movement to preserve the bar offset")
+        try expect(
+            movedRing.ring == CGSize(width: -8, height: 16),
+            "expected ring movement to adjust only the ring offset"
+        )
+
+        let movedBar = adjustedUsageOffsets(
+            barOffset: barOffset,
+            ringOffset: ringOffset,
+            displayStyle: .bars,
+            action: .down
+        )
+        try expect(
+            movedBar.bar == CGSize(width: 8, height: 0),
+            "expected bar movement to adjust only the bar offset"
+        )
+        try expect(movedBar.ring == ringOffset, "expected bar movement to preserve the ring offset")
+    }
+
+    private static func testUsageRingPositionCoordinates() throws {
+        let origin = CGPoint(x: 100, y: 200)
+        let upAndRightOffset = CGSize(width: 4, height: -4)
+        try expect(
+            adjustedUsageRingOrigin(origin, offset: upAndRightOffset, coordinateSpace: .topLeft)
+                == CGPoint(x: 104, y: 196),
+            "expected top-left coordinates to move the ring up and right"
+        )
+        try expect(
+            adjustedUsageRingOrigin(origin, offset: upAndRightOffset, coordinateSpace: .appKit)
+                == CGPoint(x: 104, y: 204),
+            "expected AppKit coordinates to move the ring up and right"
+        )
     }
 
     private static func testDefaultLogsPathPrefersActiveSQLiteDirectory() throws {
@@ -103,19 +161,13 @@ struct LimitRingsUsageTests {
         defer { try? fileManager.removeItem(at: root) }
 
         let logsPath = root.appendingPathComponent("logs_2.sqlite")
-        let statePath = root.appendingPathComponent("turn-usage.json")
-        let summaryPath = root.appendingPathComponent("turn-usage-summary.json")
         try createLogsDatabase(at: logsPath)
 
         let now = Int64(Date().timeIntervalSince1970)
         try insertInvalidRateLimitRow(logsPath: logsPath, ts: now + 1)
         try insertRateLimitRow(logsPath: logsPath, ts: now, primaryUsed: 15, secondaryUsed: 26)
 
-        let state = LimitStateReader(
-            logsPath: logsPath,
-            turnUsageStatePath: statePath,
-            turnUsageSummaryPath: summaryPath
-        ).readLatest()
+        let state = LimitStateReader(logsPath: logsPath).readLatest()
 
         try expect(state.primary?.remainingPercent == 85, "expected invalid primary row to be skipped")
         try expect(state.secondary?.remainingPercent == 74, "expected invalid secondary row to be skipped")
@@ -129,8 +181,6 @@ struct LimitRingsUsageTests {
         defer { try? fileManager.removeItem(at: root) }
 
         let logsPath = root.appendingPathComponent("logs_2.sqlite")
-        let statePath = root.appendingPathComponent("turn-usage.json")
-        let summaryPath = root.appendingPathComponent("turn-usage-summary.json")
         try createLogsDatabase(at: logsPath)
 
         let now = Int64(Date().timeIntervalSince1970)
@@ -143,11 +193,7 @@ struct LimitRingsUsageTests {
             secondaryResetAt: now + 604800
         )
 
-        let state = LimitStateReader(
-            logsPath: logsPath,
-            turnUsageStatePath: statePath,
-            turnUsageSummaryPath: summaryPath
-        ).readLatest()
+        let state = LimitStateReader(logsPath: logsPath).readLatest()
 
         try expect(state.primary == nil, "expected expired primary limit data to be rejected")
         try expect(state.secondary == nil, "expected stale secondary from expired event to be rejected")
@@ -162,8 +208,6 @@ struct LimitRingsUsageTests {
         defer { try? fileManager.removeItem(at: root) }
 
         let logsPath = root.appendingPathComponent("logs_2.sqlite")
-        let statePath = root.appendingPathComponent("turn-usage.json")
-        let summaryPath = root.appendingPathComponent("turn-usage-summary.json")
         try createLogsDatabase(at: logsPath)
 
         let now = Int64(Date().timeIntervalSince1970)
@@ -179,8 +223,6 @@ struct LimitRingsUsageTests {
         )
         let state = LimitStateReader(
             logsPath: logsPath,
-            turnUsageStatePath: statePath,
-            turnUsageSummaryPath: summaryPath,
             appServerStateProvider: { appServerState }
         ).readLatest()
 
@@ -210,8 +252,6 @@ struct LimitRingsUsageTests {
         )
         let reader = LimitStateReader(
             logsPath: logsPath,
-            turnUsageStatePath: root.appendingPathComponent("turn-usage.json"),
-            turnUsageSummaryPath: root.appendingPathComponent("turn-usage-summary.json"),
             appServerStateProvider: { nextState }
         )
 
@@ -246,8 +286,6 @@ struct LimitRingsUsageTests {
         )
         let reader = LimitStateReader(
             logsPath: logsPath,
-            turnUsageStatePath: root.appendingPathComponent("turn-usage.json"),
-            turnUsageSummaryPath: root.appendingPathComponent("turn-usage-summary.json"),
             appServerStateProvider: { nextState }
         )
 
@@ -257,196 +295,6 @@ struct LimitRingsUsageTests {
 
         try expect(expired.primary == nil, "expected expired app-server cache to be discarded")
         try expect(expired.source == "none", "expected no cached source after cache expiry")
-    }
-
-    private static func testSQLiteFallbackSkipsPlanModeTurns() throws {
-        let fileManager = FileManager.default
-        let root = URL(fileURLWithPath: NSTemporaryDirectory())
-            .appendingPathComponent("codex-limit-rings-usage-\(UUID().uuidString)", isDirectory: true)
-        try fileManager.createDirectory(at: root, withIntermediateDirectories: true)
-        defer { try? fileManager.removeItem(at: root) }
-
-        let logsPath = root.appendingPathComponent("logs_2.sqlite")
-        let statePath = root.appendingPathComponent("turn-usage.json")
-        let summaryPath = root.appendingPathComponent("turn-usage-summary.json")
-        try createLogsDatabase(at: logsPath)
-
-        let now = Int64(Date().timeIntervalSince1970)
-        try insertUsageRow(
-            logsPath: logsPath,
-            ts: now + 1,
-            threadID: "thread-a",
-            turnID: "turn-plan",
-            inputTokens: 1000,
-            cachedTokens: 200,
-            outputTokens: 50
-        )
-        try insertUsageRow(
-            logsPath: logsPath,
-            ts: now,
-            threadID: "thread-a",
-            turnID: "turn-normal",
-            inputTokens: 100,
-            cachedTokens: 40,
-            outputTokens: 10
-        )
-
-        let unfiltered = LimitStateReader(
-            logsPath: logsPath,
-            turnUsageStatePath: root.appendingPathComponent("missing-turn-usage.json"),
-            turnUsageSummaryPath: summaryPath
-        ).readUsageDetails()
-        try expect(
-            unfiltered.recentTurns.map(\.turnID) == ["turn-plan", "turn-normal"],
-            "expected SQLite fallback to read both turns without skip markers"
-        )
-
-        let stateJSON = """
-        {"version":1,"records":[],"skipped_turns":[{"thread_id":"thread-a","turn_id":"turn-plan","observed_at":\(Date().timeIntervalSince1970)}]}
-        """
-        try stateJSON.write(to: statePath, atomically: true, encoding: .utf8)
-
-        let filtered = LimitStateReader(
-            logsPath: logsPath,
-            turnUsageStatePath: statePath,
-            turnUsageSummaryPath: summaryPath
-        ).readUsageDetails()
-
-        try expect(
-            filtered.recentTurns.map(\.turnID) == ["turn-normal"],
-            "expected Plan mode skip marker to hide the matching SQLite fallback turn"
-        )
-        let normalTurn = try unwrap(filtered.recentTurns.first, "expected one non-plan fallback turn")
-        try expect(normalTurn.inputTokens == 100, "expected normal turn input token total")
-        try expect(normalTurn.cachedTokens == 40, "expected normal turn cached token total")
-        try expect(normalTurn.outputTokens == 10, "expected normal turn output token total")
-        try expect(normalTurn.effectiveTokens == 70, "expected goal-style effective token total")
-    }
-
-    private static func testUsageDetailsRejectsStaleTurnUsage() throws {
-        let fileManager = FileManager.default
-        let root = URL(fileURLWithPath: NSTemporaryDirectory())
-            .appendingPathComponent("codex-limit-rings-stale-usage-\(UUID().uuidString)", isDirectory: true)
-        try fileManager.createDirectory(at: root, withIntermediateDirectories: true)
-        defer { try? fileManager.removeItem(at: root) }
-
-        let logsPath = root.appendingPathComponent("logs_2.sqlite")
-        let statePath = root.appendingPathComponent("turn-usage.json")
-        let summaryPath = root.appendingPathComponent("turn-usage-summary.json")
-        try createLogsDatabase(at: logsPath)
-
-        let staleTimestamp = Int64(Date().timeIntervalSince1970) - 2 * 24 * 60 * 60
-        try insertUsageRow(
-            logsPath: logsPath,
-            ts: staleTimestamp,
-            threadID: "thread-old-sqlite",
-            turnID: "turn-old-sqlite",
-            inputTokens: 1000,
-            cachedTokens: 200,
-            outputTokens: 50
-        )
-
-        let stateJSON = """
-        {"version":1,"records":[{"thread_id":"thread-old-hook","turn_id":"turn-old-hook","observed_at":\(Double(staleTimestamp)),"input_tokens":1000,"cached_tokens":200,"output_tokens":50}],"skipped_turns":[]}
-        """
-        try stateJSON.write(to: statePath, atomically: true, encoding: .utf8)
-
-        let summaryJSON = """
-        {"version":1,"updated_at":\(Double(staleTimestamp)),"today":{"effective_tokens":850,"turn_count":1,"call_count":1},"latest_session":{"effective_tokens":850,"turn_count":1,"call_count":1}}
-        """
-        try summaryJSON.write(to: summaryPath, atomically: true, encoding: .utf8)
-
-        let details = LimitStateReader(
-            logsPath: logsPath,
-            turnUsageStatePath: statePath,
-            turnUsageSummaryPath: summaryPath
-        ).readUsageDetails()
-
-        try expect(details.recentTurns.isEmpty, "expected stale SQLite and hook turn usage to be hidden")
-        try expect(details.summary == nil, "expected stale turn usage summary to be hidden")
-    }
-
-    private static func testSQLiteFallbackReadsLogTargetUsageRows() throws {
-        let fileManager = FileManager.default
-        let root = URL(fileURLWithPath: NSTemporaryDirectory())
-            .appendingPathComponent("codex-limit-rings-log-target-usage-\(UUID().uuidString)", isDirectory: true)
-        try fileManager.createDirectory(at: root, withIntermediateDirectories: true)
-        defer { try? fileManager.removeItem(at: root) }
-
-        let logsPath = root.appendingPathComponent("logs_2.sqlite")
-        let statePath = root.appendingPathComponent("turn-usage.json")
-        let summaryPath = root.appendingPathComponent("turn-usage-summary.json")
-        try createLogsDatabase(at: logsPath)
-
-        let now = Int64(Date().timeIntervalSince1970)
-        try insertUsageRow(
-            logsPath: logsPath,
-            ts: now,
-            target: "log",
-            threadID: "thread-log",
-            turnID: "turn-log",
-            inputTokens: 1200,
-            cachedTokens: 200,
-            outputTokens: 80
-        )
-
-        let details = LimitStateReader(
-            logsPath: logsPath,
-            turnUsageStatePath: statePath,
-            turnUsageSummaryPath: summaryPath
-        ).readUsageDetails()
-
-        let turn = try unwrap(details.recentTurns.first, "expected log target usage row to be read")
-        try expect(turn.threadID == "thread-log", "expected log target usage row thread id")
-        try expect(turn.turnID == "turn-log", "expected log target usage row turn id")
-        try expect(turn.inputTokens == 1200, "expected log target input token total")
-        try expect(turn.cachedTokens == 200, "expected log target cached token total")
-        try expect(turn.outputTokens == 80, "expected log target output token total")
-        try expect(turn.effectiveTokens == 1080, "expected log target effective token total")
-    }
-
-    private static func testSQLiteFallbackReadsPostSamplingUsageRows() throws {
-        let fileManager = FileManager.default
-        let root = URL(fileURLWithPath: NSTemporaryDirectory())
-            .appendingPathComponent("codex-limit-rings-post-sampling-usage-\(UUID().uuidString)", isDirectory: true)
-        try fileManager.createDirectory(at: root, withIntermediateDirectories: true)
-        defer { try? fileManager.removeItem(at: root) }
-
-        let logsPath = root.appendingPathComponent("logs_2.sqlite")
-        let statePath = root.appendingPathComponent("turn-usage.json")
-        let summaryPath = root.appendingPathComponent("turn-usage-summary.json")
-        try createLogsDatabase(at: logsPath)
-
-        let now = Int64(Date().timeIntervalSince1970)
-        try insertPostSamplingUsageRow(
-            logsPath: logsPath,
-            ts: now - 1,
-            threadID: "thread-post",
-            turnID: "turn-post",
-            totalTokens: 1000
-        )
-        try insertPostSamplingUsageRow(
-            logsPath: logsPath,
-            ts: now,
-            threadID: "thread-post",
-            turnID: "turn-post",
-            totalTokens: 1500
-        )
-
-        let details = LimitStateReader(
-            logsPath: logsPath,
-            turnUsageStatePath: statePath,
-            turnUsageSummaryPath: summaryPath
-        ).readUsageDetails()
-
-        let turn = try unwrap(details.recentTurns.first, "expected post sampling usage row to be read")
-        try expect(turn.threadID == "thread-post", "expected post sampling thread id")
-        try expect(turn.turnID == "turn-post", "expected post sampling turn id")
-        try expect(turn.inputTokens == 1500, "expected latest post sampling total as input tokens")
-        try expect(turn.cachedTokens == 0, "expected post sampling cached tokens to default to zero")
-        try expect(turn.outputTokens == 0, "expected post sampling output tokens to default to zero")
-        try expect(turn.effectiveTokens == 1500, "expected latest post sampling effective token total")
-        try expect(turn.callCount == 1, "expected cumulative post sampling rows not to be summed")
     }
 
     private static func createLogsDatabase(at path: URL) throws {
@@ -501,56 +349,6 @@ struct LimitRingsUsageTests {
         try insertLogRow(logsPath: logsPath, ts: ts, threadID: "thread-rate", body: body)
     }
 
-    private static func insertUsageRow(
-        logsPath: URL,
-        ts: Int64,
-        threadID: String,
-        turnID: String,
-        inputTokens: Int64,
-        cachedTokens: Int64,
-        outputTokens: Int64
-    ) throws {
-        try insertUsageRow(
-            logsPath: logsPath,
-            ts: ts,
-            target: "codex_api::endpoint::responses_websocket",
-            threadID: threadID,
-            turnID: turnID,
-            inputTokens: inputTokens,
-            cachedTokens: cachedTokens,
-            outputTokens: outputTokens
-        )
-    }
-
-    private static func insertUsageRow(
-        logsPath: URL,
-        ts: Int64,
-        target: String,
-        threadID: String,
-        turnID: String,
-        inputTokens: Int64,
-        cachedTokens: Int64,
-        outputTokens: Int64
-    ) throws {
-        let body = """
-        turn_id=\(turnID) Received message {"type":"response.completed","response":{"usage":{"input_tokens":\(inputTokens),"input_tokens_details":{"cached_tokens":\(cachedTokens)},"output_tokens":\(outputTokens)}}}
-        """
-        try insertLogRow(logsPath: logsPath, ts: ts, target: target, threadID: threadID, body: body)
-    }
-
-    private static func insertPostSamplingUsageRow(
-        logsPath: URL,
-        ts: Int64,
-        threadID: String,
-        turnID: String,
-        totalTokens: Int64
-    ) throws {
-        let body = """
-        session_loop{thread_id=\(threadID)}:submission_dispatch{otel.name="op.dispatch.user_input" submission.id="submission-\(turnID)" codex.op="user_input"}:turn{otel.name="session_task.turn" thread.id=\(threadID) turn.id=\(turnID) model=gpt-5.5}:session_task.run:run_turn: post sampling token usage turn_id=\(turnID) total_usage_tokens=\(totalTokens) auto_compact_scope_tokens=\(totalTokens)
-        """
-        try insertLogRow(logsPath: logsPath, ts: ts, target: "codex_core::session::turn", threadID: threadID, body: body)
-    }
-
     private static func insertLogRow(logsPath: URL, ts: Int64, threadID: String, body: String) throws {
         try insertLogRow(
             logsPath: logsPath,
@@ -602,10 +400,4 @@ struct LimitRingsUsageTests {
         }
     }
 
-    private static func unwrap<T>(_ value: T?, _ message: String) throws -> T {
-        guard let value else {
-            throw LimitRingsUsageTestError.failed(message)
-        }
-        return value
-    }
 }

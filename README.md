@@ -16,12 +16,6 @@ Codex 펫 주변에 사용량 한도를 링이나 바로 표시하는 macOS 보�
 curl -fsSL https://raw.githubusercontent.com/aqwsde321/codex-pet-limit-rings/main/tools/install-remote.sh | bash
 ```
 
-턴 사용량 hook과 Codex skill도 같이 설치하려면:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/aqwsde321/codex-pet-limit-rings/main/tools/install-remote.sh | bash -s -- --with-turn-usage --with-skill
-```
-
 이미 저장소를 로컬에 받은 경우:
 
 ```bash
@@ -44,7 +38,6 @@ curl -fsSL https://raw.githubusercontent.com/aqwsde321/codex-pet-limit-rings/mai
 
 ```bash
 tools/uninstall-limit-rings.sh
-tools/uninstall-turn-usage-hook.sh
 ```
 
 ## Codex에게 맡기기
@@ -52,13 +45,12 @@ tools/uninstall-turn-usage-hook.sh
 이 저장소는 Codex 에이전트가 바로 설치할 수 있게 구성되어 있습니다. 처음 쓰는 사용자는 기본 설치를 추천합니다.
 
 - 추천: 오버레이 앱만 설치
-- 선택: 턴별 사용량 토스트가 필요하면 `Track Turn Usage` hook까지 설치
 - 선택: 다른 Codex 대화에서도 이 작업 흐름을 재사용하려면 skill까지 설치
 
 Codex에게 이렇게 요청하면 됩니다.
 
 ```text
-Install Codex Pet Limit Rings for me. Recommend the simplest setup first, ask before enabling turn-usage tracking or installing the Codex skill, then verify the overlay is running.
+Codex Pet Limit Rings를 설치해 줘. 가장 단순한 구성을 먼저 추천하고, Codex skill 설치 전에는 확인을 받은 뒤 오버레이 실행 상태까지 검증해 줘.
 ```
 
 관련 파일:
@@ -66,7 +58,6 @@ Install Codex Pet Limit Rings for me. Recommend the simplest setup first, ask be
 - [AGENTS.md](AGENTS.md): 프로젝트 작업 규칙
 - [skills/codex-pet-limit-rings/SKILL.md](skills/codex-pet-limit-rings/SKILL.md): 설치/검증 워크플로
 - [docs/limit-rings.md](docs/limit-rings.md): 데이터와 렌더링 모델
-- [docs/recent-usage.md](docs/recent-usage.md): 턴 사용량 표시 의미
 - [docs/solutions/workflow-issues/usage-overlay-no-data-diagnosis.md](docs/solutions/workflow-issues/usage-overlay-no-data-diagnosis.md): Codex 업데이트 후 overlay 미표시 진단 순서
 
 스킬을 로컬 Codex에 설치하려면:
@@ -93,39 +84,17 @@ tools/install-codex-skill.sh
 
 ### 메뉴
 
-<img src="docs/assets/usage-menu-preview.png" alt="메뉴 막대 항목 예시" width="360">
-
-메뉴 막대 아이콘에서 오버레이 표시, 링/바 전환, 바 위치, 새로고침, 종료를 제어합니다. `Track Turn Usage`를 켜면 `Recent turns`, `Used Today`, `This chat`, `Limit delta`가 함께 표시됩니다.
-
-`Track Turn Usage`와 `Show Usage Toasts`를 켜면 새 턴 사용량이 관측될 때 짧은 토스트가 뜹니다. `Used`는 `max(0, In - Cached) + Out`으로 계산한 goal 스타일 토큰 값입니다.
+메뉴 막대 아이콘에서 오버레이 표시, 링/바 전환, 각 스타일의 위치, 바 너비, 새로고침, 종료를 제어합니다. 링과 바 위치는 따로 저장됩니다.
 
 ## 동작 방식
 
-앱은 세 파일/상태를 중심으로 동작합니다.
+앱은 다음 로컬 상태를 읽습니다.
 
 - `~/.codex/.codex-global-state.json`: 펫 표시 여부와 위치
-- `~/.codex/sqlite/logs_2.sqlite` 또는 legacy `~/.codex/logs_2.sqlite`: 최신 로컬 `codex.rate_limits` 이벤트와 response `usage`
-- `~/.codex/codex-pet-limit-rings/*`: 선택 hook의 설정과 작은 로컬 카운터
+- Codex CLI `app-server --stdio`: 현재 계정의 rate-limit snapshot
+- `~/.codex/sqlite/logs_2.sqlite` 또는 legacy `~/.codex/logs_2.sqlite`: 최신 로컬 `codex.rate_limits` fallback 이벤트
 
 펫을 닫으면 오버레이도 사라지고, 다시 켜면 따라옵니다. 여러 모니터에서도 현재 펫 위치를 기준으로 움직입니다.
-
-## Track Turn Usage
-
-최근 Codex 턴의 로컬 토큰 사용량을 메뉴와 토스트에 보여 주는 선택 기능입니다. 더 정확한 종료 시점 기록이 필요하면 `Stop` hook을 설치합니다.
-
-```bash
-tools/install-turn-usage-hook.sh
-```
-
-표시 값:
-
-- `Used`: `max(0, In - Cached) + Out`
-- `Used Today`: 오늘 사용 토큰
-- `Session`: 최신 세션 사용 토큰
-- `I`, `Ca`, `O`: input, cached input, output tokens
-- `2c`, `3c`: 같은 턴 그룹에서 관측된 response usage 호출 수
-
-이 값은 로컬 활동을 이해하기 위한 보조 정보이며 과금 계산기나 공식 rate-limit 산식이 아닙니다. 자세한 내용은 [docs/recent-usage.md](docs/recent-usage.md)를 참고하세요.
 
 ## 프라이버시
 
@@ -145,7 +114,7 @@ tools/
   install-remote.sh                clone 없는 원라인 설치
   install-limit-rings.sh           빌드/설치/로그인 항목 시작
   uninstall-limit-rings.sh         앱과 로그인 항목 제거
-  install-turn-usage-hook.sh       선택 Stop hook 설치
+  cleanup-legacy-turn-usage.sh     이전 릴리스의 hook 상태 정리
   run-limit-rings.sh               개발 실행
 
 skills/codex-pet-limit-rings/
@@ -154,7 +123,6 @@ skills/codex-pet-limit-rings/
 docs/
   assets/                          README 이미지
   limit-rings.md                   구현 계약
-  recent-usage.md                  턴 사용량 표시 의미
 ```
 
 ## 개발
@@ -165,6 +133,7 @@ swiftc tools/codex-pet-limit-rings.swift -o tmp/codex-pet-limit-rings -framework
 tmp/codex-pet-limit-rings --preview tmp/limit-rings-preview.png --size 164
 bash -n tools/*.sh
 tools/test-limit-rings-usage.sh
+tools/test-cleanup-legacy-turn-usage.sh
 ```
 
 ## 라이선스

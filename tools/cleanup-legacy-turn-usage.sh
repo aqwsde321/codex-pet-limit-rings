@@ -3,6 +3,53 @@ set -euo pipefail
 
 CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
 HOOK_SCRIPT="$CODEX_HOME/codex-pet-limit-rings/hooks/codex-turn-usage-stop-hook.py"
+STATE_DIR="$CODEX_HOME/codex-pet-limit-rings"
+LEGACY_FOUND=0
+
+if [[ "$CODEX_HOME" == "$HOME/.codex" ]]; then
+  defaults delete local.codex.pet-limit-rings CodexPetLimitRings.turnUsageEnabled >/dev/null 2>&1 || true
+  defaults delete local.codex.pet-limit-rings CodexPetLimitRings.usageToastEnabled >/dev/null 2>&1 || true
+  defaults delete local.codex.pet-limit-rings CodexPetLimitRings.threadWindowSlots >/dev/null 2>&1 || true
+fi
+
+for path in \
+  "$HOOK_SCRIPT" \
+  "$STATE_DIR/settings.json" \
+  "$STATE_DIR/turn-usage.json" \
+  "$STATE_DIR/turn-usage-ledger.json" \
+  "$STATE_DIR/turn-usage-summary.json" \
+  "$STATE_DIR/turn-usage-queue.jsonl" \
+  "$STATE_DIR/turn-usage.json.tmp" \
+  "$STATE_DIR/turn-usage-ledger.json.tmp" \
+  "$STATE_DIR/turn-usage-summary.json.tmp" \
+  "$STATE_DIR/turn-usage-queue.jsonl.tmp" \
+  "$STATE_DIR/turn-usage-queue.lock" \
+  "$STATE_DIR/turn-usage.lock" \
+  "$STATE_DIR/turn-usage-worker.lock" \
+  "$STATE_DIR/turn-usage-lifecycle.lock" \
+  "$STATE_DIR/turn-usage-hook.log" \
+  "$STATE_DIR/turn-usage-hook.log.1" \
+  "$STATE_DIR/install-state.json"
+do
+  if [[ -e "$path" ]]; then
+    LEGACY_FOUND=1
+    break
+  fi
+done
+
+for config in "$CODEX_HOME/config.toml" "$CODEX_HOME/hooks.json"; do
+  if [[ -f "$config" ]] && {
+    grep -Fq "codex-turn-usage-stop-hook.py" "$config" ||
+    grep -Fq "Codex Pet Limit Rings turn-usage hook" "$config"
+  }; then
+    LEGACY_FOUND=1
+    break
+  fi
+done
+
+if [[ "$LEGACY_FOUND" == "0" ]]; then
+  exit 0
+fi
 
 /usr/bin/python3 - "$CODEX_HOME" "$HOOK_SCRIPT" <<'PY'
 import fcntl
@@ -35,6 +82,7 @@ cleanup_paths = [
     codex_home / "codex-pet-limit-rings" / "turn-usage-hook.log.1",
     codex_home / "codex-pet-limit-rings" / "turn-usage-queue.jsonl",
     codex_home / "codex-pet-limit-rings" / "turn-usage-queue.jsonl.tmp",
+    codex_home / "codex-pet-limit-rings" / "turn-usage-queue.lock",
 ]
 block_begin = "# Codex Pet Limit Rings turn-usage hook: begin\n"
 block_end = "# Codex Pet Limit Rings turn-usage hook: end\n"
@@ -46,7 +94,10 @@ def is_hook_marker(line):
 
 
 def is_our_hook_command(line):
-    return toml_key(line) == "command" and str(hook_script) in line
+    return (
+        toml_key(line) == "command"
+        and "codex-pet-limit-rings/hooks/codex-turn-usage-stop-hook.py" in line
+    )
 
 
 def remove_existing_inline_stop_hooks(text):
@@ -251,7 +302,7 @@ if data is not None:
     if not isinstance(stop_groups, list):
         stop_groups = []
     filtered_groups = []
-    hook_script_text = str(hook_script)
+    hook_script_suffix = "codex-pet-limit-rings/hooks/codex-turn-usage-stop-hook.py"
     for stop_group in stop_groups:
         if not isinstance(stop_group, dict):
             filtered_groups.append(stop_group)
@@ -264,7 +315,7 @@ if data is not None:
             item for item in group_hooks
             if not isinstance(item, dict)
             or not isinstance(item.get("command"), str)
-            or hook_script_text not in item.get("command")
+            or hook_script_suffix not in item.get("command")
         ]
         if len(filtered_hooks) != len(group_hooks):
             changed = True
@@ -289,6 +340,8 @@ with_lifecycle_lock(cleanup_local_state)
 PY
 
 rm -f "$HOOK_SCRIPT"
+rm -f "$STATE_DIR/turn-usage-worker.lock" "$STATE_DIR/turn-usage-lifecycle.lock"
+rmdir "$STATE_DIR/hooks" "$STATE_DIR" >/dev/null 2>&1 || true
 
-echo "Codex turn-usage Stop hook uninstalled"
-echo "Restart Codex sessions for hook config changes to take effect"
+echo "Legacy Codex turn-usage hook state cleaned"
+echo "Restart existing Codex sessions if they had the legacy hook loaded"

@@ -25,95 +25,27 @@ struct LimitState {
     static let empty = LimitState(planType: nil, primary: nil, secondary: nil, additional: [], observedAt: Date(), source: "none")
 }
 
-private func goalEffectiveTokens(inputTokens: Int64, cachedTokens: Int64, outputTokens: Int64) -> Int64 {
-    max(0, inputTokens - cachedTokens) + max(0, outputTokens)
-}
-
-struct UsageCallSummary {
-    var observedAt: Date
-    var inputTokens: Int64
-    var cachedTokens: Int64
-    var outputTokens: Int64
-    var effectiveTokens: Int64
-}
-
-struct UsageTurnSummary {
-    var threadID: String
-    var turnID: String?
-    var windowLabel: String?
-    var observedAt: Date
-    var inputTokens: Int64
-    var cachedTokens: Int64
-    var outputTokens: Int64
-    var effectiveTokens: Int64
-    var calls: [UsageCallSummary]
-
-    var callCount: Int {
-        max(calls.count, 1)
-    }
-}
-
-struct UsageSummaryTotals {
-    var effectiveTokens: Int64
-}
-
-struct UsageSummary {
-    var today: UsageSummaryTotals?
-    var latestSession: UsageSummaryTotals?
-
-    var hasTotals: Bool {
-        today != nil || latestSession != nil
-    }
-}
-
-struct LimitDelta {
-    var primary: Double?
-    var secondary: Double?
-}
-
-struct UsageDetails {
-    var recentTurns: [UsageTurnSummary]
-    var limitDelta: LimitDelta?
-    var summary: UsageSummary?
-
-    static let empty = UsageDetails(recentTurns: [], limitDelta: nil, summary: nil)
-}
-
-struct ThreadWindowSlot: Codable {
-    var threadID: String
-    var slot: Int
-    var lastSeen: TimeInterval
-}
-
 private let limitStatePollInterval: TimeInterval = 20.0
 private let appServerLimitStateTimeout: TimeInterval = 8.0
 private let appServerLimitStateFailureRetryInterval: TimeInterval = 60.0
 private let limitStateFallbackMaxAge: TimeInterval = 30.0 * 60.0
+private let rateLimitWindowMergeMaxAge: TimeInterval = 24.0 * 60.0 * 60.0
 private let petFrameFallbackPollInterval: TimeInterval = 2.0
 private let petFrameStateDebounceInterval: TimeInterval = 0.035
 private let dragFollowInterval: TimeInterval = 1.0 / 60.0
 private let dragLiveMismatchTolerance: CGFloat = 96.0
 private let stateCheckPulseDuration: TimeInterval = 0.85
-private let usageToastPollInterval: TimeInterval = 2.0
-private let usageToastDuration: TimeInterval = 8.0
-private let usageToastMaxAge: TimeInterval = 60.0
-private let hookUsageStateMaxAge: TimeInterval = 24.0 * 60.0 * 60.0
-private let usageToastWidth: CGFloat = 192.0
-private let usageMenuRowWidth: CGFloat = 440.0
-private let usageMenuRowHeight: CGFloat = 24.0
 private let usageBarTopPadding: CGFloat = 132.0
 private let usageBarBottomPadding: CGFloat = 56.0
 private let usageRingTopPadding: CGFloat = 132.0
 private let ringsVisibleDefaultsKey = "CodexPetLimitRings.ringsVisible"
 private let barsOffsetXDefaultsKey = "CodexPetLimitRings.barsOffsetX"
 private let barsOffsetYDefaultsKey = "CodexPetLimitRings.barsOffsetY"
+private let ringsOffsetXDefaultsKey = "CodexPetLimitRings.ringsOffsetX"
+private let ringsOffsetYDefaultsKey = "CodexPetLimitRings.ringsOffsetY"
 private let barWidthPresetDefaultsKey = "CodexPetLimitRings.barWidthPreset"
 private let displayStyleDefaultsKey = "CodexPetLimitRings.displayStyle"
-private let turnUsageEnabledDefaultsKey = "CodexPetLimitRings.turnUsageEnabled"
-private let usageToastEnabledDefaultsKey = "CodexPetLimitRings.usageToastEnabled"
-private let threadWindowSlotsDefaultsKey = "CodexPetLimitRings.threadWindowSlots"
-private let threadWindowSlotCount = 10
-private let usageBarPositionStep: CGFloat = 4.0
+private let usagePositionStep: CGFloat = 4.0
 
 enum UsageDisplayStyle: String, CaseIterable {
     case bars
@@ -149,12 +81,63 @@ private enum UsageBarWidthPreset: String, CaseIterable {
     }
 }
 
-private enum UsageBarPositionAction: Int {
+enum UsagePositionAction: Int {
     case left
     case right
     case up
     case down
     case reset
+}
+
+enum UsageCoordinateSpace {
+    case topLeft
+    case appKit
+}
+
+func adjustedUsageOffset(_ offset: CGSize, action: UsagePositionAction) -> CGSize {
+    var offset = offset
+    switch action {
+    case .left:
+        offset.width -= usagePositionStep
+    case .right:
+        offset.width += usagePositionStep
+    case .up:
+        offset.height -= usagePositionStep
+    case .down:
+        offset.height += usagePositionStep
+    case .reset:
+        offset = .zero
+    }
+    return offset
+}
+
+func adjustedUsageOffsets(
+    barOffset: CGSize,
+    ringOffset: CGSize,
+    displayStyle: UsageDisplayStyle,
+    action: UsagePositionAction
+) -> (bar: CGSize, ring: CGSize) {
+    switch displayStyle {
+    case .bars:
+        return (adjustedUsageOffset(barOffset, action: action), ringOffset)
+    case .rings:
+        return (barOffset, adjustedUsageOffset(ringOffset, action: action))
+    }
+}
+
+func adjustedUsageRingOrigin(
+    _ origin: CGPoint,
+    offset: CGSize,
+    coordinateSpace: UsageCoordinateSpace
+) -> CGPoint {
+    let yOffset: CGFloat
+    switch coordinateSpace {
+    case .topLeft:
+        yOffset = offset.height
+    case .appKit:
+        yOffset = -offset.height
+    }
+    return CGPoint(x: origin.x + offset.width, y: origin.y + yOffset)
 }
 
 private struct EventPayload: Decodable {
@@ -185,98 +168,6 @@ private struct BucketPayload: Decodable {
         }
         return LimitBucket(usedPercent: used, windowMinutes: minutes, resetAt: reset_at)
     }
-}
-
-private struct ResponseUsagePayload: Decodable {
-    var response: ResponseUsageBodyPayload?
-    var usage: UsagePayload?
-
-    var resolvedUsage: UsagePayload? {
-        usage ?? response?.usage
-    }
-}
-
-private struct ResponseUsageBodyPayload: Decodable {
-    var usage: UsagePayload?
-}
-
-private struct UsagePayload: Decodable {
-    var input_tokens: Int64?
-    var input_tokens_details: InputTokenDetailsPayload?
-    var output_tokens: Int64?
-}
-
-private struct InputTokenDetailsPayload: Decodable {
-    var cached_tokens: Int64?
-}
-
-private struct HookUsageStatePayload: Decodable {
-    var records: [HookUsageRecordPayload]?
-    var skipped_turns: [HookSkippedTurnPayload]?
-}
-
-private struct HookUsageRecordPayload: Decodable {
-    var thread_id: String?
-    var session_id: String?
-    var turn_id: String?
-    var observed_at: Double?
-    var input_tokens: Int64?
-    var cached_tokens: Int64?
-    var output_tokens: Int64?
-    var effective_tokens: Int64?
-    var calls: [HookUsageCallPayload]?
-}
-
-private struct HookUsageCallPayload: Decodable {
-    var observed_at: Double?
-    var input_tokens: Int64?
-    var cached_tokens: Int64?
-    var output_tokens: Int64?
-    var effective_tokens: Int64?
-}
-
-private struct HookSkippedTurnPayload: Decodable {
-    var thread_id: String?
-    var session_id: String?
-    var turn_id: String?
-    var observed_at: Double?
-}
-
-private struct HookUsageSummaryPayload: Decodable {
-    var today: HookUsageSummaryTotalsPayload?
-    var latest_session: HookUsageSummaryTotalsPayload?
-    var updated_at: Double?
-}
-
-private struct HookUsageSummaryTotalsPayload: Decodable {
-    var input_tokens: Int64?
-    var cached_tokens: Int64?
-    var output_tokens: Int64?
-    var effective_tokens: Int64?
-    var turn_count: Int?
-    var call_count: Int?
-
-    func toSummaryTotals() -> UsageSummaryTotals? {
-        let inputTokens = input_tokens ?? 0
-        let cachedTokens = cached_tokens ?? 0
-        let outputTokens = output_tokens ?? 0
-        let effectiveTokens = effective_tokens ?? goalEffectiveTokens(
-            inputTokens: inputTokens,
-            cachedTokens: cachedTokens,
-            outputTokens: outputTokens
-        )
-        let turnCount = turn_count ?? 0
-        let callCount = call_count ?? 0
-        guard turnCount > 0 || callCount > 0 || effectiveTokens > 0 else {
-            return nil
-        }
-        return UsageSummaryTotals(effectiveTokens: effectiveTokens)
-    }
-}
-
-private struct TurnUsageSettingsPayload: Encodable {
-    var version: Int
-    var track_turn_usage: Bool
 }
 
 private struct AppServerInitializeRequest: Encodable {
@@ -541,13 +432,9 @@ struct LimitRingsConfig {
     var codexHome: URL
     var globalStatePath: URL
     var logsPath: URL
-    var turnUsageStatePath: URL
-    var turnUsageSummaryPath: URL
-    var turnUsageSettingsPath: URL
     var previewPath: URL?
     var previewStyle: UsageDisplayStyle = .rings
     var previewUsesSampleData: Bool = false
-    var previewShowsToasts: Bool = false
     var previewUsesBackground: Bool = false
     var fallbackSize: CGFloat = 220
     var mouseMonitorEnabled: Bool = true
@@ -555,80 +442,15 @@ struct LimitRingsConfig {
 
 final class LimitStateReader {
     private let logsPath: URL
-    private let turnUsageStatePath: URL
-    private let turnUsageSummaryPath: URL
     private let appServerStateProvider: (() -> LimitState?)?
     private var lastAppServerState: LimitState?
 
-    private struct UsageSample {
-        var threadID: String
-        var turnID: String?
-        var observedAt: Date
-        var inputTokens: Int64
-        var cachedTokens: Int64
-        var outputTokens: Int64
-        var effectiveTokens: Int64
-        var aggregatesOlderSamples: Bool
-
-        func callSummary() -> UsageCallSummary {
-            UsageCallSummary(
-                observedAt: observedAt,
-                inputTokens: inputTokens,
-                cachedTokens: cachedTokens,
-                outputTokens: outputTokens,
-                effectiveTokens: effectiveTokens
-            )
-        }
-    }
-
-    private struct UsageAccumulator {
-        var threadID: String
-        var turnID: String?
-        var observedAt: Date
-        var inputTokens: Int64
-        var cachedTokens: Int64
-        var outputTokens: Int64
-        var effectiveTokens: Int64
-        var calls: [UsageCallSummary]
-        var aggregatesOlderSamples: Bool
-
-        var canAggregateOlderSamples: Bool {
-            aggregatesOlderSamples && turnID != nil
-        }
-
-        mutating func add(_ sample: UsageSample) {
-            inputTokens += sample.inputTokens
-            cachedTokens += sample.cachedTokens
-            outputTokens += sample.outputTokens
-            effectiveTokens += sample.effectiveTokens
-            calls.append(sample.callSummary())
-        }
-
-        func summary() -> UsageTurnSummary {
-            UsageTurnSummary(
-                threadID: threadID,
-                turnID: turnID,
-                windowLabel: nil,
-                observedAt: observedAt,
-                inputTokens: inputTokens,
-                cachedTokens: cachedTokens,
-                outputTokens: outputTokens,
-                effectiveTokens: effectiveTokens,
-                calls: calls.sorted { $0.observedAt < $1.observedAt }
-            )
-        }
-    }
-
     init(
         logsPath: URL,
-        turnUsageStatePath: URL,
-        turnUsageSummaryPath: URL,
         codexHome: URL? = nil,
         appServerStateProvider: (() -> LimitState?)? = nil
     ) {
         self.logsPath = logsPath
-        self.turnUsageStatePath = turnUsageStatePath
-        self.turnUsageSummaryPath = turnUsageSummaryPath
         if let appServerStateProvider {
             self.appServerStateProvider = appServerStateProvider
         } else if let codexHome {
@@ -656,26 +478,6 @@ final class LimitStateReader {
             return cached
         }
         return logState
-    }
-
-    func readUsageDetails() -> UsageDetails {
-        let now = Date()
-        let hookTurns = readHookUsageTurns(now: now)
-        let skippedTurnKeys = readHookSkippedTurnKeys(now: now)
-        let summary = readHookUsageSummary(now: now)
-        guard FileManager.default.fileExists(atPath: logsPath.path) else {
-            return hookTurns.isEmpty && summary == nil ? .empty : UsageDetails(recentTurns: hookTurns, limitDelta: nil, summary: summary)
-        }
-
-        var db: OpaquePointer?
-        let openResult = sqlite3_open_v2(logsPath.path, &db, SQLITE_OPEN_READONLY | SQLITE_OPEN_NOMUTEX, nil)
-        guard openResult == SQLITE_OK, let db else {
-            return hookTurns.isEmpty && summary == nil ? .empty : UsageDetails(recentTurns: hookTurns, limitDelta: nil, summary: summary)
-        }
-        defer { sqlite3_close(db) }
-
-        let limitDelta = readLimitDelta(db: db, now: now)
-        return UsageDetails(recentTurns: mergeRecentTurns(hookTurns: hookTurns, sqliteTurns: readRecentTurns(db: db, skippedTurnKeys: skippedTurnKeys, now: now)), limitDelta: limitDelta, summary: summary)
     }
 
     private func readLatestLog() -> LimitState {
@@ -736,7 +538,7 @@ final class LimitStateReader {
             if current.secondary == nil,
                let secondary = state.secondary,
                isCurrentBucket(secondary, observedAt: state.observedAt, now: now),
-               current.observedAt.timeIntervalSince(state.observedAt) <= hookUsageStateMaxAge {
+               current.observedAt.timeIntervalSince(state.observedAt) <= rateLimitWindowMergeMaxAge {
                 current.secondary = secondary
                 return current
             }
@@ -772,296 +574,6 @@ final class LimitStateReader {
         return now.timeIntervalSince(observedAt) <= max(windowAge, limitStateFallbackMaxAge)
     }
 
-    private func readRecentTurns(db: OpaquePointer, skippedTurnKeys: Set<String>, now: Date) -> [UsageTurnSummary] {
-        let sql = """
-        SELECT ts, ts_nanos, thread_id, feedback_log_body
-        FROM logs INDEXED BY idx_logs_ts
-        WHERE (
-            target IN ('codex_api::endpoint::responses_websocket', 'log')
-            AND feedback_log_body LIKE '%"usage":{"input_tokens"%'
-        ) OR (
-            target = 'codex_core::session::turn'
-            AND feedback_log_body LIKE '%post sampling token usage turn_id=%'
-            AND feedback_log_body LIKE '%total_usage_tokens=%'
-        )
-        ORDER BY ts DESC, ts_nanos DESC, id DESC
-        LIMIT 400
-        """
-
-        var statement: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK, let statement else {
-            return []
-        }
-        defer { sqlite3_finalize(statement) }
-
-        var orderedTurnKeys: [String] = []
-        var accumulators: [String: UsageAccumulator] = [:]
-
-        while sqlite3_step(statement) == SQLITE_ROW {
-            guard let cBody = sqlite3_column_text(statement, 3) else {
-                continue
-            }
-
-            let body = String(cString: cBody)
-            let threadID = stringColumn(statement, 2) ?? parseDelimitedValue(after: "thread.id=", in: body)
-            guard let threadID, !threadID.isEmpty else {
-                continue
-            }
-            let ts = sqlite3_column_int64(statement, 0)
-            let tsNanos = sqlite3_column_int64(statement, 1)
-            let observedAt = Date(timeIntervalSince1970: TimeInterval(ts) + TimeInterval(tsNanos) / 1_000_000_000.0)
-            guard isCurrentUsageDate(observedAt, now: now) else {
-                continue
-            }
-            guard let sample = parseUsageSample(threadID: threadID, observedAt: observedAt, body: body) else {
-                continue
-            }
-
-            let turnKey = usageGroupKey(threadID: threadID, turnID: sample.turnID, observedAt: sample.observedAt)
-            if skippedTurnKeys.contains(turnKey) {
-                continue
-            }
-            if var accumulator = accumulators[turnKey] {
-                if accumulator.canAggregateOlderSamples, accumulator.turnID == sample.turnID {
-                    accumulator.add(sample)
-                    accumulators[turnKey] = accumulator
-                }
-                continue
-            }
-            if orderedTurnKeys.count >= 3 {
-                continue
-            }
-
-            orderedTurnKeys.append(turnKey)
-            accumulators[turnKey] = UsageAccumulator(
-                threadID: threadID,
-                turnID: sample.turnID,
-                observedAt: sample.observedAt,
-                inputTokens: sample.inputTokens,
-                cachedTokens: sample.cachedTokens,
-                outputTokens: sample.outputTokens,
-                effectiveTokens: sample.effectiveTokens,
-                calls: [sample.callSummary()],
-                aggregatesOlderSamples: sample.aggregatesOlderSamples
-            )
-        }
-
-        return orderedTurnKeys.compactMap { accumulators[$0]?.summary() }
-    }
-
-    private func usageGroupKey(threadID: String, turnID: String?, observedAt: Date) -> String {
-        [
-            threadID,
-            turnID ?? String(observedAt.timeIntervalSince1970)
-        ].joined(separator: "|")
-    }
-
-    private func mergeRecentTurns(hookTurns: [UsageTurnSummary], sqliteTurns: [UsageTurnSummary]) -> [UsageTurnSummary] {
-        var turnsByKey: [String: UsageTurnSummary] = [:]
-        for turn in sqliteTurns {
-            turnsByKey[usageGroupKey(threadID: turn.threadID, turnID: turn.turnID, observedAt: turn.observedAt)] = turn
-        }
-        for turn in hookTurns {
-            let key = usageGroupKey(threadID: turn.threadID, turnID: turn.turnID, observedAt: turn.observedAt)
-            if let existing = turnsByKey[key] {
-                turnsByKey[key] = preferredTurn(existing: existing, candidate: turn)
-            } else {
-                turnsByKey[key] = turn
-            }
-        }
-        return Array(turnsByKey.values.sorted { $0.observedAt > $1.observedAt }.prefix(3))
-    }
-
-    private func preferredTurn(existing: UsageTurnSummary, candidate: UsageTurnSummary) -> UsageTurnSummary {
-        if candidate.calls.count != existing.calls.count {
-            return candidate.calls.count > existing.calls.count ? candidate : existing
-        }
-
-        let existingTokens = existing.effectiveTokens
-        let candidateTokens = candidate.effectiveTokens
-        return candidateTokens >= existingTokens ? candidate : existing
-    }
-
-    private func readHookUsageTurns(now: Date) -> [UsageTurnSummary] {
-        guard FileManager.default.fileExists(atPath: turnUsageStatePath.path),
-              let data = try? Data(contentsOf: turnUsageStatePath),
-              let state = try? JSONDecoder().decode(HookUsageStatePayload.self, from: data),
-              let records = state.records else {
-            return []
-        }
-
-        var seenKeys = Set<String>()
-        var turns: [UsageTurnSummary] = []
-        for record in records.sorted(by: { ($0.observed_at ?? 0) > ($1.observed_at ?? 0) }) {
-            let threadID = record.thread_id ?? record.session_id
-            guard let threadID, !threadID.isEmpty,
-                  let observedAtUnix = record.observed_at else {
-                continue
-            }
-
-            let observedAt = Date(timeIntervalSince1970: observedAtUnix)
-            guard isCurrentUsageDate(observedAt, now: now) else {
-                continue
-            }
-            let key = usageGroupKey(threadID: threadID, turnID: record.turn_id, observedAt: observedAt)
-            guard !seenKeys.contains(key) else {
-                continue
-            }
-            seenKeys.insert(key)
-
-            let calls = hookCalls(from: record, observedAt: observedAt)
-            let inputTokens = record.input_tokens ?? calls.reduce(Int64(0)) { $0 + $1.inputTokens }
-            let cachedTokens = record.cached_tokens ?? calls.reduce(Int64(0)) { $0 + $1.cachedTokens }
-            let outputTokens = record.output_tokens ?? calls.reduce(Int64(0)) { $0 + $1.outputTokens }
-            let effectiveTokens = record.effective_tokens ?? calls.reduce(Int64(0)) { $0 + $1.effectiveTokens }
-            turns.append(UsageTurnSummary(
-                threadID: threadID,
-                turnID: record.turn_id,
-                windowLabel: nil,
-                observedAt: observedAt,
-                inputTokens: inputTokens,
-                cachedTokens: cachedTokens,
-                outputTokens: outputTokens,
-                effectiveTokens: effectiveTokens,
-                calls: calls
-            ))
-
-            if turns.count >= 3 {
-                break
-            }
-        }
-        return turns
-    }
-
-    private func readHookSkippedTurnKeys(now: Date) -> Set<String> {
-        guard FileManager.default.fileExists(atPath: turnUsageStatePath.path),
-              let data = try? Data(contentsOf: turnUsageStatePath),
-              let state = try? JSONDecoder().decode(HookUsageStatePayload.self, from: data),
-              let skippedTurns = state.skipped_turns else {
-            return []
-        }
-
-        var keys = Set<String>()
-        for skippedTurn in skippedTurns {
-            let threadID = skippedTurn.thread_id ?? skippedTurn.session_id
-            guard let threadID, !threadID.isEmpty,
-                  let turnID = skippedTurn.turn_id, !turnID.isEmpty,
-                  let observedAtUnix = skippedTurn.observed_at else {
-                continue
-            }
-            let observedAt = Date(timeIntervalSince1970: observedAtUnix)
-            guard isCurrentUsageDate(observedAt, now: now) else {
-                continue
-            }
-            keys.insert(usageGroupKey(threadID: threadID, turnID: turnID, observedAt: observedAt))
-        }
-        return keys
-    }
-
-    private func readHookUsageSummary(now: Date) -> UsageSummary? {
-        guard FileManager.default.fileExists(atPath: turnUsageSummaryPath.path),
-              let data = try? Data(contentsOf: turnUsageSummaryPath),
-              let payload = try? JSONDecoder().decode(HookUsageSummaryPayload.self, from: data) else {
-            return nil
-        }
-        guard let updatedAt = payload.updated_at,
-              isCurrentUsageDate(Date(timeIntervalSince1970: updatedAt), now: now) else {
-            return nil
-        }
-
-        let summary = UsageSummary(
-            today: payload.today?.toSummaryTotals(),
-            latestSession: payload.latest_session?.toSummaryTotals()
-        )
-        return summary.hasTotals ? summary : nil
-    }
-
-    private func hookCalls(from record: HookUsageRecordPayload, observedAt: Date) -> [UsageCallSummary] {
-        let calls = record.calls?.compactMap { call -> UsageCallSummary? in
-            guard let inputTokens = call.input_tokens,
-                  let outputTokens = call.output_tokens else {
-                return nil
-            }
-            return UsageCallSummary(
-                observedAt: Date(timeIntervalSince1970: call.observed_at ?? observedAt.timeIntervalSince1970),
-                inputTokens: inputTokens,
-                cachedTokens: call.cached_tokens ?? 0,
-                outputTokens: outputTokens,
-                effectiveTokens: call.effective_tokens ?? goalEffectiveTokens(
-                    inputTokens: inputTokens,
-                    cachedTokens: call.cached_tokens ?? 0,
-                    outputTokens: outputTokens
-                )
-            )
-        } ?? []
-
-        if !calls.isEmpty {
-            return calls.sorted { $0.observedAt < $1.observedAt }
-        }
-
-        return [UsageCallSummary(
-            observedAt: observedAt,
-            inputTokens: record.input_tokens ?? 0,
-            cachedTokens: record.cached_tokens ?? 0,
-            outputTokens: record.output_tokens ?? 0,
-            effectiveTokens: record.effective_tokens ?? goalEffectiveTokens(
-                inputTokens: record.input_tokens ?? 0,
-                cachedTokens: record.cached_tokens ?? 0,
-                outputTokens: record.output_tokens ?? 0
-            )
-        )]
-    }
-
-    private func isCurrentUsageDate(_ date: Date, now: Date) -> Bool {
-        now.timeIntervalSince(date) <= hookUsageStateMaxAge
-    }
-
-    private func readLimitDelta(db: OpaquePointer, now: Date) -> LimitDelta? {
-        let sql = """
-        SELECT ts, ts_nanos, feedback_log_body
-        FROM logs INDEXED BY idx_logs_ts
-        WHERE target = 'codex_api::endpoint::responses_websocket'
-          AND feedback_log_body LIKE '%websocket event: {"type":"codex.rate_limits"%'
-        ORDER BY ts DESC, ts_nanos DESC, id DESC
-        LIMIT 2
-        """
-
-        var statement: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK, let statement else {
-            return nil
-        }
-        defer { sqlite3_finalize(statement) }
-
-        var states: [LimitState] = []
-        while sqlite3_step(statement) == SQLITE_ROW {
-            guard let cText = sqlite3_column_text(statement, 2) else {
-                continue
-            }
-            let ts = sqlite3_column_int64(statement, 0)
-            let tsNanos = sqlite3_column_int64(statement, 1)
-            let observedAt = Date(timeIntervalSince1970: TimeInterval(ts) + TimeInterval(tsNanos) / 1_000_000_000.0)
-            let body = String(cString: cText)
-            if let state = decodeRateLimitState(observedAt: observedAt, body: body),
-               isDisplayableLimitState(state),
-               isCurrentLimitState(state, now: now) {
-                states.append(state)
-            }
-        }
-
-        guard states.count >= 2 else { return nil }
-        let latest = states[0]
-        let previous = states[1]
-        return LimitDelta(
-            primary: delta(latest.primary, previous.primary),
-            secondary: delta(latest.secondary, previous.secondary)
-        )
-    }
-
-    private func delta(_ latest: LimitBucket?, _ previous: LimitBucket?) -> Double? {
-        guard let latest, let previous else { return nil }
-        return latest.remainingPercent - previous.remainingPercent
-    }
-
     private func decodeRateLimitState(observedAt: Date, body: String) -> LimitState? {
         guard let json = extractRateLimitJSON(from: body),
               let data = json.data(using: .utf8),
@@ -1083,105 +595,8 @@ final class LimitStateReader {
         return LimitState(planType: payload.plan_type, primary: primary, secondary: secondary, additional: additional, observedAt: observedAt, source: "log")
     }
 
-    private func parseUsageSample(threadID: String, observedAt: Date, body: String) -> UsageSample? {
-        if let json = extractJSONEnvelope(from: body),
-           let data = json.data(using: .utf8),
-           let payload = try? JSONDecoder().decode(ResponseUsagePayload.self, from: data),
-           let usage = payload.resolvedUsage,
-           let inputTokens = usage.input_tokens,
-           let outputTokens = usage.output_tokens {
-            let cachedTokens = usage.input_tokens_details?.cached_tokens ?? 0
-            return UsageSample(
-                threadID: threadID,
-                turnID: parseDelimitedValue(after: "turn_id=", in: body)
-                    ?? parseDelimitedValue(after: "turn.id=", in: body)
-                    ?? parseDelimitedValue(after: "submission.id=", in: body),
-                observedAt: observedAt,
-                inputTokens: inputTokens,
-                cachedTokens: cachedTokens,
-                outputTokens: outputTokens,
-                effectiveTokens: goalEffectiveTokens(inputTokens: inputTokens, cachedTokens: cachedTokens, outputTokens: outputTokens),
-                aggregatesOlderSamples: true
-            )
-        }
-
-        guard body.contains("post sampling token usage"),
-              let totalTokens = parseInt64(after: "total_usage_tokens=", in: body) else {
-            return nil
-        }
-        return UsageSample(
-            threadID: threadID,
-            turnID: parseDelimitedValue(after: "turn_id=", in: body)
-                ?? parseDelimitedValue(after: "turn.id=", in: body)
-                ?? parseDelimitedValue(after: "submission.id=", in: body),
-            observedAt: observedAt,
-            inputTokens: totalTokens,
-            cachedTokens: 0,
-            outputTokens: 0,
-            effectiveTokens: totalTokens,
-            aggregatesOlderSamples: false
-        )
-    }
-
-    private func parseInt64(after marker: String, in body: String) -> Int64? {
-        guard let value = parseDelimitedValue(after: marker, in: body) else {
-            return nil
-        }
-        return Int64(value)
-    }
-
-    private func parseDelimitedValue(after marker: String, in body: String) -> String? {
-        guard let markerRange = body.range(of: marker) else {
-            return nil
-        }
-
-        var index = markerRange.upperBound
-        if index < body.endIndex, body[index] == "\"" {
-            index = body.index(after: index)
-            let start = index
-            while index < body.endIndex, body[index] != "\"" {
-                index = body.index(after: index)
-            }
-            guard start < index else { return nil }
-            return String(body[start..<index])
-        }
-
-        let start = index
-        while index < body.endIndex {
-            let char = body[index]
-            if char == "}" || char == ")" || char == "]" || char == "," || char == " " || char == "\t" || char == "\n" {
-                break
-            }
-            index = body.index(after: index)
-        }
-
-        guard start < index else { return nil }
-        return String(body[start..<index])
-    }
-
-    private func stringColumn(_ statement: OpaquePointer, _ index: Int32) -> String? {
-        guard sqlite3_column_type(statement, index) != SQLITE_NULL,
-              let cString = sqlite3_column_text(statement, index) else {
-            return nil
-        }
-        return String(cString: cString)
-    }
-
     private func extractRateLimitJSON(from body: String) -> String? {
         guard let start = body.range(of: "{\"type\":\"codex.rate_limits\"")?.lowerBound else {
-            return nil
-        }
-
-        return extractJSON(from: body, start: start)
-    }
-
-    private func extractJSONEnvelope(from body: String) -> String? {
-        if let markerRange = body.range(of: "websocket event: "),
-           let start = body[markerRange.upperBound...].firstIndex(of: "{") {
-            return extractJSON(from: body, start: start)
-        }
-
-        guard let start = body.range(of: "{\"type\":\"response.")?.lowerBound ?? body.firstIndex(of: "{") else {
             return nil
         }
 
@@ -1342,7 +757,6 @@ struct LimitRingRenderer {
     var barWidth: CGFloat
     var barOffset: CGSize
     var checkPulse: CGFloat
-    var usageToastTurns: [UsageTurnSummary]
     var previewUsesBackground: Bool = false
 
     func draw(in rect: CGRect) {
@@ -1360,9 +774,6 @@ struct LimitRingRenderer {
             drawProgressPanel(context, in: rect)
         case .rings:
             drawRings(context, in: rect)
-        }
-        if !usageToastTurns.isEmpty {
-            drawUsageToast(context, in: rect, turns: usageToastTurns)
         }
         context.restoreGState()
     }
@@ -1699,93 +1110,6 @@ struct LimitRingRenderer {
         context.restoreGState()
     }
 
-    private func drawUsageToast(_ context: CGContext, in rect: CGRect, turns: [UsageTurnSummary]) {
-        let cards = turns.prefix(3).map { turn -> (rows: [NSAttributedString], sizes: [CGSize], height: CGFloat) in
-            let rows = usageToastCardRows(for: turn)
-            let sizes = rows.map { $0.size() }
-            let contentHeight = sizes.map(\.height).reduce(0.0, +) + CGFloat(max(0, rows.count - 1)) * 1.0
-            return (rows, sizes, ceil(contentHeight + 11.0))
-        }
-        guard !cards.isEmpty else { return }
-
-        let cardGap: CGFloat = 5.0
-        let contentWidth = cards.flatMap(\.sizes).map(\.width).max() ?? 0.0
-        let width = min(max(126.0, ceil(contentWidth + 14.0)), rect.width - 8.0)
-        let stackHeight = cards.map(\.height).reduce(0.0, +) + CGFloat(cards.count - 1) * cardGap
-        let stackBottom: CGFloat
-        switch displayStyle {
-        case .bars:
-            let petTop = rect.height - usageBarTopPadding
-            stackBottom = max(6.0, min(rect.height - stackHeight - 6.0, petTop + 8.0))
-        case .rings:
-            let ringTop = rect.height - usageRingTopPadding
-            let firstCardHeight = cards.first?.height ?? 0.0
-            let previousStart = ringTop - firstCardHeight - 8.0
-            stackBottom = max(6.0, min(rect.height - stackHeight - 6.0, previousStart))
-        }
-
-        context.saveGState()
-        var cardBottom = stackBottom
-        for card in cards {
-            let badgeRect = CGRect(x: rect.midX - width / 2.0, y: cardBottom, width: width, height: card.height)
-            drawUsageToastCard(context, rect: badgeRect, rows: card.rows, sizes: card.sizes)
-            cardBottom += card.height + cardGap
-        }
-        context.restoreGState()
-    }
-
-    private func usageToastCardRows(for turn: UsageTurnSummary) -> [NSAttributedString] {
-        let text = NSMutableAttributedString(string: "")
-        text.append(NSAttributedString(string: "\(shortUsageID(for: turn)) ", attributes: toastDetailAttributes()))
-        text.append(NSAttributedString(string: "\(turn.callCount)c", attributes: toastMetricAttributes(color: toastUsedColor(), size: 9.0)))
-        text.append(NSAttributedString(string: "  ", attributes: toastDetailAttributes()))
-        appendUsageMetric("Used ", formatTokenCount(turn.effectiveTokens), color: toastUsedColor(), size: 9.0, to: text)
-        return [text]
-    }
-
-    private func drawUsageToastCard(_ context: CGContext, rect: CGRect, rows: [NSAttributedString], sizes: [CGSize]) {
-        let path = CGPath(roundedRect: rect, cornerWidth: 8.0, cornerHeight: 8.0, transform: nil)
-        context.setShadow(offset: CGSize(width: 0.0, height: -1.0), blur: 9.0, color: NSColor.black.withAlphaComponent(0.24).cgColor)
-        context.setFillColor(NSColor(calibratedWhite: 0.08, alpha: 0.72).cgColor)
-        context.addPath(path)
-        context.fillPath()
-        context.setShadow(offset: .zero, blur: 0.0, color: nil)
-        context.setStrokeColor(NSColor(calibratedWhite: 1.0, alpha: 0.16).cgColor)
-        context.setLineWidth(1.0)
-        context.addPath(path)
-        context.strokePath()
-
-        var rowY = rect.maxY - 5.5
-        for (row, size) in zip(rows, sizes) {
-            rowY -= size.height
-            row.draw(at: CGPoint(x: rect.minX + 7.0, y: rowY))
-            rowY -= 1.0
-        }
-    }
-
-    private func shortUsageID(for turn: UsageTurnSummary) -> String {
-        guard let turnID = turn.turnID, !turnID.isEmpty else {
-            return turn.windowLabel ?? compactID(turn.threadID)
-        }
-        if let windowLabel = turn.windowLabel, !windowLabel.isEmpty {
-            return "\(windowLabel)/\(compactID(turnID))"
-        }
-        return "\(compactID(turn.threadID))/\(compactID(turnID))"
-    }
-
-    private func compactID(_ id: String) -> String {
-        let compact = id.replacingOccurrences(of: "-", with: "")
-        guard compact.count > 4 else {
-            return compact
-        }
-        return String(compact.suffix(4))
-    }
-
-    private func appendUsageMetric(_ label: String, _ value: String, color: NSColor, size: CGFloat = 8.2, to text: NSMutableAttributedString) {
-        text.append(NSAttributedString(string: label, attributes: toastMetricLabelAttributes()))
-        text.append(NSAttributedString(string: value, attributes: toastMetricAttributes(color: color, size: size)))
-    }
-
     private func drawModelLimitDots(_ context: CGContext, center: CGPoint, radius: CGFloat) {
         let dots = Array(state.additional.prefix(8))
         guard dots.count > 0 else { return }
@@ -1823,22 +1147,6 @@ struct LimitRingRenderer {
             return "\(Int(percent.rounded()))%"
         }
         return String(format: "%.1f%%", percent)
-    }
-
-    private func formatTokenCount(_ tokens: Int64) -> String {
-        let value = Double(tokens)
-        guard value >= 1_000 else {
-            return "\(tokens)"
-        }
-
-        let thousands = value / 1_000.0
-        if thousands >= 100 {
-            return String(format: "%.0fk", thousands)
-        }
-        if abs(thousands.rounded() - thousands) < 0.05 {
-            return "\(Int(thousands.rounded()))k"
-        }
-        return String(format: "%.1fk", thousands)
     }
 
     private func formatResetCountdown(_ resetAt: TimeInterval?) -> String? {
@@ -1915,31 +1223,6 @@ struct LimitRingRenderer {
         ]
     }
 
-    private func toastDetailAttributes() -> [NSAttributedString.Key: Any] {
-        [
-            .font: NSFont.monospacedSystemFont(ofSize: 8.2, weight: .semibold),
-            .foregroundColor: NSColor(calibratedWhite: 1.0, alpha: 0.70)
-        ]
-    }
-
-    private func toastMetricLabelAttributes() -> [NSAttributedString.Key: Any] {
-        [
-            .font: NSFont.monospacedSystemFont(ofSize: 8.2, weight: .semibold),
-            .foregroundColor: NSColor(calibratedWhite: 1.0, alpha: 0.48)
-        ]
-    }
-
-    private func toastMetricAttributes(color: NSColor, size: CGFloat) -> [NSAttributedString.Key: Any] {
-        [
-            .font: NSFont.monospacedSystemFont(ofSize: size, weight: .semibold),
-            .foregroundColor: color
-        ]
-    }
-
-    private func toastUsedColor() -> NSColor {
-        NSColor(calibratedRed: 0.24, green: 0.92, blue: 0.74, alpha: 0.96)
-    }
-
 }
 
 final class LimitRingView: NSView {
@@ -1958,14 +1241,10 @@ final class LimitRingView: NSView {
     var checkPulse: CGFloat = 0.0 {
         didSet { needsDisplay = true }
     }
-    var usageToastTurns: [UsageTurnSummary] = [] {
-        didSet { needsDisplay = true }
-    }
-
     override var isOpaque: Bool { false }
 
     override func draw(_ dirtyRect: NSRect) {
-        LimitRingRenderer(state: state, displayStyle: displayStyle, barWidth: barWidth, barOffset: barOffset, checkPulse: checkPulse, usageToastTurns: usageToastTurns).draw(in: bounds)
+        LimitRingRenderer(state: state, displayStyle: displayStyle, barWidth: barWidth, barOffset: barOffset, checkPulse: checkPulse).draw(in: bounds)
     }
 }
 
@@ -1978,26 +1257,13 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
     private let stateQueue = DispatchQueue(label: "codex-pet-limit-rings.state-reader")
     private var statusItem: NSStatusItem?
     private var summaryItem: NSMenuItem?
-    private var recentUsageHeaderItem: NSMenuItem?
-    private var recentUsageSummaryItem: NSMenuItem?
-    private var recentUsageItems: [NSMenuItem] = []
-    private var limitDeltaSeparatorItem: NSMenuItem?
-    private var limitDeltaItem: NSMenuItem?
-    private var turnUsageItem: NSMenuItem?
-    private var usageToastItem: NSMenuItem?
     private var showRingsItem: NSMenuItem?
     private var displayStyleItems: [NSMenuItem] = []
-    private var barControlsSeparatorItem: NSMenuItem?
-    private var positionMenuItem: NSMenuItem?
     private var barWidthMenuItem: NSMenuItem?
-    private var positionControl: NSSegmentedControl?
-    private var positionLabel: NSTextField?
     private var barWidthItems: [NSMenuItem] = []
     private var stateTimer: Timer?
-    private var usageTimer: Timer?
     private var frameTimer: Timer?
     private var dragFollowTimer: Timer?
-    private var usageToastTimer: Timer?
     private var stateCheckPulseTimer: Timer?
     private var stateCheckPulseStartedAt: Date?
     private var mouseDownMonitor: Any?
@@ -2016,36 +1282,29 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
     private var ringsVisible: Bool
     private var displayStyle: UsageDisplayStyle
     private var usageBarOffset: CGSize
+    private var usageRingOffset: CGSize
     private var barWidthPreset: UsageBarWidthPreset
-    private var turnUsageEnabled: Bool
-    private var usageToastEnabled: Bool
-    private var usageDetails: UsageDetails = .empty
     private var stateReadInFlight = false
-    private var usageReadInFlight = false
-    private var hasPrimedUsageToast = false
-    private var lastUsageToastSignatures: [String: String] = [:]
-    private var threadWindowSlots: [String: ThreadWindowSlot] = [:]
 
     init(config: LimitRingsConfig) {
         self.config = config
         self.stateReader = LimitStateReader(
             logsPath: config.logsPath,
-            turnUsageStatePath: config.turnUsageStatePath,
-            turnUsageSummaryPath: config.turnUsageSummaryPath,
             codexHome: config.codexHome
         )
         self.frameReader = PetFrameReader(globalStatePath: config.globalStatePath)
         self.ringView = LimitRingView(frame: CGRect(origin: .zero, size: CGSize(width: config.fallbackSize, height: config.fallbackSize)))
         self.ringsVisible = UserDefaults.standard.object(forKey: ringsVisibleDefaultsKey) as? Bool ?? true
-        self.turnUsageEnabled = UserDefaults.standard.object(forKey: turnUsageEnabledDefaultsKey) as? Bool ?? false
-        self.usageToastEnabled = UserDefaults.standard.object(forKey: usageToastEnabledDefaultsKey) as? Bool ?? true
         self.displayStyle = UsageDisplayStyle(rawValue: UserDefaults.standard.string(forKey: displayStyleDefaultsKey) ?? "") ?? .rings
         self.usageBarOffset = CGSize(
             width: CGFloat(UserDefaults.standard.double(forKey: barsOffsetXDefaultsKey)),
             height: CGFloat(UserDefaults.standard.double(forKey: barsOffsetYDefaultsKey))
         )
+        self.usageRingOffset = CGSize(
+            width: CGFloat(UserDefaults.standard.double(forKey: ringsOffsetXDefaultsKey)),
+            height: CGFloat(UserDefaults.standard.double(forKey: ringsOffsetYDefaultsKey))
+        )
         self.barWidthPreset = UsageBarWidthPreset(rawValue: UserDefaults.standard.string(forKey: barWidthPresetDefaultsKey) ?? "") ?? .normal
-        self.threadWindowSlots = Self.loadThreadWindowSlots()
         self.panel = NSPanel(
             contentRect: CGRect(origin: .zero, size: CGSize(width: config.fallbackSize, height: config.fallbackSize)),
             styleMask: [.borderless, .nonactivatingPanel],
@@ -2065,15 +1324,12 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
         ringView.displayStyle = displayStyle
         ringView.barWidth = barWidthPreset.width
         ringView.barOffset = usageBarOffset
-        writeTurnUsageSettings()
     }
 
     deinit {
         stateTimer?.invalidate()
-        usageTimer?.invalidate()
         frameTimer?.invalidate()
         dragFollowTimer?.invalidate()
-        usageToastTimer?.invalidate()
         stateCheckPulseTimer?.invalidate()
         pendingGlobalStateWatcherRestart?.cancel()
         pendingFrameUpdate?.cancel()
@@ -2093,7 +1349,6 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
         stateTimer = Timer.scheduledTimer(withTimeInterval: limitStatePollInterval, repeats: true) { [weak self] _ in
             self?.updateState()
         }
-        updateUsageTimer()
         frameTimer = Timer.scheduledTimer(withTimeInterval: petFrameFallbackPollInterval, repeats: true) { [weak self] _ in
             self?.updateFrame()
         }
@@ -2102,96 +1357,18 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
         }
     }
 
-    private func updateState(showToast: Bool = true) {
+    private func updateState() {
         guard !stateReadInFlight else { return }
         stateReadInFlight = true
-        let shouldReadUsage = turnUsageEnabled
         stateQueue.async { [weak self] in
             guard let self else { return }
             let state = self.stateReader.readLatest()
-            let usageDetails = shouldReadUsage ? self.stateReader.readUsageDetails() : .empty
             DispatchQueue.main.async {
                 self.ringView.state = state
-                if shouldReadUsage, self.turnUsageEnabled {
-                    self.applyUsageDetails(usageDetails, showToast: showToast)
-                }
                 self.updateSummaryMenuItem()
                 self.stateReadInFlight = false
                 self.triggerStateCheckPulse()
             }
-        }
-    }
-
-    private func updateUsageDetails() {
-        guard turnUsageEnabled, !usageReadInFlight else { return }
-        usageReadInFlight = true
-        stateQueue.async { [weak self] in
-            guard let self else { return }
-            let usageDetails = self.stateReader.readUsageDetails()
-            DispatchQueue.main.async {
-                if self.turnUsageEnabled {
-                    self.applyUsageDetails(usageDetails, showToast: true)
-                }
-                self.usageReadInFlight = false
-            }
-        }
-    }
-
-    private func updateUsageTimer() {
-        usageTimer?.invalidate()
-        usageTimer = nil
-        guard turnUsageEnabled else { return }
-        usageTimer = Timer.scheduledTimer(withTimeInterval: usageToastPollInterval, repeats: true) { [weak self] _ in
-            self?.updateUsageDetails()
-        }
-    }
-
-    private func writeTurnUsageSettings() {
-        let payload = TurnUsageSettingsPayload(version: 1, track_turn_usage: turnUsageEnabled)
-        do {
-            let data = try JSONEncoder().encode(payload)
-            let directory = config.turnUsageSettingsPath.deletingLastPathComponent()
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
-            let lockFD = open(turnUsageLifecycleLockPath.path, O_CREAT | O_RDWR, S_IRUSR | S_IWUSR)
-            if lockFD >= 0 {
-                defer {
-                    flock(lockFD, LOCK_UN)
-                    close(lockFD)
-                }
-                fchmod(lockFD, S_IRUSR | S_IWUSR)
-                flock(lockFD, LOCK_EX)
-            }
-            try data.write(to: config.turnUsageSettingsPath, options: .atomic)
-            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: config.turnUsageSettingsPath.path)
-            if !turnUsageEnabled {
-                clearTurnUsageQueueFiles()
-            }
-        } catch {
-            fputs("codex-pet-limit-rings: failed to write turn usage settings: \(error)\n", stderr)
-        }
-    }
-
-    private var turnUsageLifecycleLockPath: URL {
-        config.turnUsageSettingsPath
-            .deletingLastPathComponent()
-            .appendingPathComponent("turn-usage-lifecycle.lock")
-    }
-
-    private func clearTurnUsageQueueFiles() {
-        let directory = config.turnUsageSettingsPath.deletingLastPathComponent()
-        removeFileIfPresent(directory.appendingPathComponent("turn-usage-queue.jsonl"))
-        removeFileIfPresent(directory.appendingPathComponent("turn-usage-queue.jsonl.tmp"))
-    }
-
-    private func removeFileIfPresent(_ url: URL) {
-        guard FileManager.default.fileExists(atPath: url.path) else {
-            return
-        }
-        do {
-            try FileManager.default.removeItem(at: url)
-        } catch {
-            fputs("codex-pet-limit-rings: failed to remove \(url.path): \(error)\n", stderr)
         }
     }
 
@@ -2337,9 +1514,13 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
             )
         case .rings:
             let side = ringOverlaySide(for: petFrame)
-            topLeft = CGPoint(
-                x: petFrame.midX - size.width / 2,
-                y: petFrame.midY - side / 2 - usageRingTopPadding
+            topLeft = adjustedUsageRingOrigin(
+                CGPoint(
+                    x: petFrame.midX - size.width / 2,
+                    y: petFrame.midY - side / 2 - usageRingTopPadding
+                ),
+                offset: usageRingOffset,
+                coordinateSpace: .topLeft
             )
         }
         let origin = appKitOriginFromTopLeft(topLeft, size: size)
@@ -2358,7 +1539,14 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
             )
         case .rings:
             let side = ringOverlaySide(for: petFrame)
-            origin = CGPoint(x: petFrame.midX - size.width / 2, y: petFrame.midY - side / 2)
+            origin = adjustedUsageRingOrigin(
+                CGPoint(
+                    x: petFrame.midX - size.width / 2,
+                    y: petFrame.midY - side / 2
+                ),
+                offset: usageRingOffset,
+                coordinateSpace: .appKit
+            )
         }
         panel.setFrame(CGRect(origin: origin, size: size), display: true)
     }
@@ -2374,14 +1562,14 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
 
     private func progressOverlaySize(for petFrame: CGRect) -> CGSize {
         CGSize(
-            width: max(132.0, ringOverlaySide(for: petFrame), barWidthPreset.width + 72.0, usageToastWidth + 8.0),
+            width: max(132.0, ringOverlaySide(for: petFrame), barWidthPreset.width + 72.0),
             height: petFrame.height + usageBarBottomPadding + usageBarTopPadding
         )
     }
 
     private func ringOverlaySize(for petFrame: CGRect) -> CGSize {
         let side = ringOverlaySide(for: petFrame)
-        return CGSize(width: max(side, usageToastWidth + 8.0), height: side + usageRingTopPadding)
+        return CGSize(width: side, height: side + usageRingTopPadding)
     }
 
     private var ringOverlayPadding: CGFloat {
@@ -2410,19 +1598,6 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
         summaryItem = summary
 
         menu.addItem(.separator())
-        installUsageDetailsMenuItems(in: menu)
-        menu.addItem(.separator())
-
-        let turnUsageItem = NSMenuItem(title: "Track Turn Usage", action: #selector(toggleTurnUsage(_:)), keyEquivalent: "")
-        turnUsageItem.target = self
-        menu.addItem(turnUsageItem)
-        self.turnUsageItem = turnUsageItem
-
-        let usageToastItem = NSMenuItem(title: "Show Usage Toasts", action: #selector(toggleUsageToasts(_:)), keyEquivalent: "")
-        usageToastItem.target = self
-        menu.addItem(usageToastItem)
-        self.usageToastItem = usageToastItem
-
         let showItem = NSMenuItem(title: "Show Usage Overlay", action: #selector(toggleRings(_:)), keyEquivalent: "")
         showItem.target = self
         menu.addItem(showItem)
@@ -2434,9 +1609,8 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
 
         menu.addItem(.separator())
         menu.addItem(makeDisplayStyleMenuItem())
-        let barControlsSeparator = NSMenuItem.separator()
-        menu.addItem(barControlsSeparator)
-        barControlsSeparatorItem = barControlsSeparator
+        let layoutControlsSeparator = NSMenuItem.separator()
+        menu.addItem(layoutControlsSeparator)
         menu.addItem(makeBarWidthMenuItem())
         menu.addItem(makePositionMenuItem())
         menu.addItem(.separator())
@@ -2447,9 +1621,6 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
 
         item.menu = menu
         updateSummaryMenuItem()
-        updateUsageDetailsMenuItems()
-        updateTurnUsageMenuItem()
-        updateUsageToastMenuItem()
         updateShowRingsMenuItem()
         updateDisplayStyleMenuItems()
         updateBarWidthMenuItems()
@@ -2457,252 +1628,10 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
 
     func menuWillOpen(_ menu: NSMenu) {
         updateSummaryMenuItem()
-        updateTurnUsageMenuItem()
-        updateUsageToastMenuItem()
         updateShowRingsMenuItem()
         updateDisplayStyleMenuItems()
         updateBarWidthMenuItems()
-        updateState(showToast: false)
-    }
-
-    private func refreshUsageDetailsNow() {
-        guard turnUsageEnabled else {
-            clearUsageDetails()
-            return
-        }
-        applyUsageDetails(stateReader.readUsageDetails(), showToast: false)
-    }
-
-    private func applyUsageDetails(_ usageDetails: UsageDetails, showToast: Bool) {
-        guard turnUsageEnabled else {
-            clearUsageDetails()
-            return
-        }
-        let labeledUsageDetails = applyWindowLabels(to: usageDetails)
-        self.usageDetails = labeledUsageDetails
-        updateUsageDetailsMenuItems()
-        if showToast, usageToastEnabled {
-            updateUsageToast(from: labeledUsageDetails)
-        }
-    }
-
-    private func clearUsageDetails() {
-        usageToastTimer?.invalidate()
-        usageToastTimer = nil
-        usageDetails = .empty
-        ringView.usageToastTurns = []
-        hasPrimedUsageToast = false
-        lastUsageToastSignatures = [:]
-        updateUsageDetailsMenuItems()
-    }
-
-    private func applyWindowLabels(to usageDetails: UsageDetails) -> UsageDetails {
-        var changed = false
-        let turns = usageDetails.recentTurns.map { turn -> UsageTurnSummary in
-            var turn = turn
-            turn.windowLabel = windowLabel(forThreadID: turn.threadID, observedAt: turn.observedAt, changed: &changed)
-            return turn
-        }
-        if changed {
-            saveThreadWindowSlots()
-        }
-        return UsageDetails(recentTurns: turns, limitDelta: usageDetails.limitDelta, summary: usageDetails.summary)
-    }
-
-    private func windowLabel(forThreadID threadID: String, observedAt: Date, changed: inout Bool) -> String {
-        let lastSeen = observedAt.timeIntervalSince1970
-        if var entry = threadWindowSlots[threadID] {
-            if lastSeen > entry.lastSeen {
-                entry.lastSeen = lastSeen
-                threadWindowSlots[threadID] = entry
-                changed = true
-            }
-            return "W\(entry.slot)"
-        }
-
-        let slot: Int
-        let usedSlots = Set(threadWindowSlots.values.map(\.slot))
-        if let freeSlot = (0..<threadWindowSlotCount).first(where: { !usedSlots.contains($0) }) {
-            slot = freeSlot
-        } else if let evicted = threadWindowSlots.values.min(by: { $0.lastSeen < $1.lastSeen }) {
-            slot = evicted.slot
-            threadWindowSlots.removeValue(forKey: evicted.threadID)
-        } else {
-            slot = 0
-        }
-
-        threadWindowSlots[threadID] = ThreadWindowSlot(threadID: threadID, slot: slot, lastSeen: lastSeen)
-        changed = true
-        return "W\(slot)"
-    }
-
-    private static func loadThreadWindowSlots() -> [String: ThreadWindowSlot] {
-        guard let data = UserDefaults.standard.data(forKey: threadWindowSlotsDefaultsKey),
-              let slots = try? JSONDecoder().decode([ThreadWindowSlot].self, from: data) else {
-            return [:]
-        }
-
-        var result: [String: ThreadWindowSlot] = [:]
-        var usedSlots = Set<Int>()
-        for slot in slots.sorted(by: { $0.lastSeen > $1.lastSeen }) {
-            guard (0..<threadWindowSlotCount).contains(slot.slot),
-                  !slot.threadID.isEmpty,
-                  !usedSlots.contains(slot.slot) else {
-                continue
-            }
-            result[slot.threadID] = slot
-            usedSlots.insert(slot.slot)
-            if result.count >= threadWindowSlotCount {
-                break
-            }
-        }
-        return result
-    }
-
-    private func saveThreadWindowSlots() {
-        let slots = threadWindowSlots.values.sorted {
-            if $0.slot == $1.slot {
-                return $0.lastSeen > $1.lastSeen
-            }
-            return $0.slot < $1.slot
-        }
-        guard let data = try? JSONEncoder().encode(slots) else {
-            return
-        }
-        UserDefaults.standard.set(data, forKey: threadWindowSlotsDefaultsKey)
-    }
-
-    private func updateUsageToast(from usageDetails: UsageDetails) {
-        let turns = Array(usageDetails.recentTurns.prefix(3))
-        guard !turns.isEmpty else {
-            if !hasPrimedUsageToast {
-                hasPrimedUsageToast = true
-            }
-            return
-        }
-
-        let signatures = Dictionary(uniqueKeysWithValues: turns.map { (usageToastKey(for: $0), usageToastSignature(for: $0)) })
-        let currentKeys = Set(signatures.keys)
-        lastUsageToastSignatures = lastUsageToastSignatures.filter { currentKeys.contains($0.key) }
-        if !hasPrimedUsageToast {
-            hasPrimedUsageToast = true
-            lastUsageToastSignatures = signatures
-            return
-        }
-        let now = Date()
-        let changedTurns = turns.filter { turn in
-            let key = usageToastKey(for: turn)
-            let age = now.timeIntervalSince(turn.observedAt)
-            return age <= usageToastMaxAge
-                && lastUsageToastSignatures[key] != signatures[key]
-        }
-        guard !changedTurns.isEmpty else {
-            return
-        }
-
-        for turn in changedTurns {
-            let key = usageToastKey(for: turn)
-            lastUsageToastSignatures[key] = signatures[key]
-        }
-        showUsageToast(changedTurns)
-    }
-
-    private func usageToastKey(for turn: UsageTurnSummary) -> String {
-        [
-            turn.threadID,
-            turn.turnID ?? String(turn.observedAt.timeIntervalSince1970)
-        ].joined(separator: "|")
-    }
-
-    private func usageToastSignature(for turn: UsageTurnSummary) -> String {
-        [
-            turn.threadID,
-            turn.turnID ?? String(turn.observedAt.timeIntervalSince1970),
-            String(turn.callCount),
-            String(turn.inputTokens),
-            String(turn.cachedTokens),
-            String(turn.outputTokens),
-            String(turn.effectiveTokens)
-        ].joined(separator: "|")
-    }
-
-    private func showUsageToast(_ turns: [UsageTurnSummary]) {
-        usageToastTimer?.invalidate()
-        let updatedTurns = latestToastTurnsByThread(turns).sorted { $0.observedAt < $1.observedAt }
-        guard !updatedTurns.isEmpty else {
-            return
-        }
-        ringView.usageToastTurns = Array(updatedTurns.suffix(3))
-        if ringsVisible, currentPetFrameAppKit != nil {
-            panel.orderFrontRegardless()
-        }
-
-        let timer = Timer(timeInterval: usageToastDuration, repeats: false) { [weak self] _ in
-            self?.ringView.usageToastTurns = []
-            self?.usageToastTimer = nil
-        }
-        usageToastTimer = timer
-        RunLoop.main.add(timer, forMode: .common)
-    }
-
-    private func latestToastTurnsByThread(_ turns: [UsageTurnSummary]) -> [UsageTurnSummary] {
-        var seenThreadIDs = Set<String>()
-        var result: [UsageTurnSummary] = []
-        for turn in turns.sorted(by: { $0.observedAt > $1.observedAt }) {
-            guard !seenThreadIDs.contains(turn.threadID) else {
-                continue
-            }
-            seenThreadIDs.insert(turn.threadID)
-            result.append(turn)
-        }
-        return result
-    }
-
-    private func installUsageDetailsMenuItems(in menu: NSMenu) {
-        let header = makeUsageMenuLabelItem(height: usageMenuRowHeight, textInset: 16.0)
-        setUsageMenuItem(header, attributedText: menuHeaderText("Recent turns"), hidden: false)
-        menu.addItem(header)
-        recentUsageHeaderItem = header
-
-        let summary = makeUsageMenuLabelItem(height: usageMenuRowHeight, textInset: 16.0)
-        menu.addItem(summary)
-        recentUsageSummaryItem = summary
-
-        recentUsageItems = (0..<3).map { _ in
-            let item = makeUsageMenuLabelItem(height: usageMenuRowHeight, textInset: 16.0)
-            menu.addItem(item)
-            return item
-        }
-
-        let separator = NSMenuItem.separator()
-        menu.addItem(separator)
-        limitDeltaSeparatorItem = separator
-
-        let delta = NSMenuItem(title: "Limit delta waiting", action: nil, keyEquivalent: "")
-        delta.isEnabled = false
-        menu.addItem(delta)
-        limitDeltaItem = delta
-    }
-
-    private func makeUsageMenuLabelItem(height: CGFloat, textInset: CGFloat) -> NSMenuItem {
-        let item = NSMenuItem()
-        let view = NSView(frame: NSRect(x: 0, y: 0, width: usageMenuRowWidth, height: height))
-        let label = NSTextField(labelWithString: "")
-        label.frame = NSRect(x: textInset, y: 3.0, width: usageMenuRowWidth - textInset - 12.0, height: height - 5.0)
-        label.lineBreakMode = .byTruncatingTail
-        label.allowsDefaultTighteningForTruncation = true
-        view.addSubview(label)
-        item.view = view
-        return item
-    }
-
-    private func setUsageMenuItem(_ item: NSMenuItem, attributedText: NSAttributedString, hidden: Bool) {
-        if let label = item.view?.subviews.compactMap({ $0 as? NSTextField }).first {
-            label.attributedStringValue = attributedText
-        } else {
-            item.attributedTitle = attributedText
-        }
-        item.isHidden = hidden
+        updateState()
     }
 
     private func makeDisplayStyleMenuItem() -> NSMenuItem {
@@ -2721,7 +1650,6 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
 
     private func makePositionMenuItem() -> NSMenuItem {
         let item = NSMenuItem()
-        positionMenuItem = item
         let view = NSView(frame: NSRect(x: 0, y: 0, width: 210, height: 50))
 
         let label = NSTextField(labelWithString: "Position")
@@ -2729,24 +1657,22 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
         label.font = NSFont.menuFont(ofSize: 12.0)
         label.textColor = .secondaryLabelColor
         view.addSubview(label)
-        positionLabel = label
 
         let control = NSSegmentedControl(
             labels: ["←", "→", "↑", "↓", "↺"],
             trackingMode: .momentary,
             target: self,
-            action: #selector(adjustUsageBarsFromSegment(_:))
+            action: #selector(adjustUsageOverlayFromSegment(_:))
         )
         control.frame = NSRect(x: 30, y: 6, width: 146, height: 24)
         control.controlSize = .small
         control.segmentStyle = .rounded
-        control.setWidth(28.0, forSegment: UsageBarPositionAction.left.rawValue)
-        control.setWidth(28.0, forSegment: UsageBarPositionAction.right.rawValue)
-        control.setWidth(28.0, forSegment: UsageBarPositionAction.up.rawValue)
-        control.setWidth(28.0, forSegment: UsageBarPositionAction.down.rawValue)
-        control.setWidth(34.0, forSegment: UsageBarPositionAction.reset.rawValue)
+        control.setWidth(28.0, forSegment: UsagePositionAction.left.rawValue)
+        control.setWidth(28.0, forSegment: UsagePositionAction.right.rawValue)
+        control.setWidth(28.0, forSegment: UsagePositionAction.up.rawValue)
+        control.setWidth(28.0, forSegment: UsagePositionAction.down.rawValue)
+        control.setWidth(34.0, forSegment: UsagePositionAction.reset.rawValue)
         view.addSubview(control)
-        positionControl = control
 
         item.view = view
         return item
@@ -2802,69 +1728,6 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
         }
     }
 
-    private func updateUsageDetailsMenuItems() {
-        guard turnUsageEnabled else {
-            recentUsageHeaderItem?.isHidden = true
-            if let recentUsageSummaryItem {
-                setUsageMenuItem(recentUsageSummaryItem, attributedText: NSAttributedString(string: ""), hidden: true)
-            }
-            recentUsageItems.forEach {
-                setUsageMenuItem($0, attributedText: NSAttributedString(string: ""), hidden: true)
-            }
-            limitDeltaSeparatorItem?.isHidden = true
-            limitDeltaItem?.title = ""
-            limitDeltaItem?.isHidden = true
-            statusItem?.menu?.update()
-            return
-        }
-
-        recentUsageHeaderItem?.isHidden = false
-        if let recentUsageSummaryItem {
-            if let summary = usageDetails.summary {
-                setUsageMenuItem(recentUsageSummaryItem, attributedText: usageSummaryRow(for: summary), hidden: false)
-            } else {
-                setUsageMenuItem(recentUsageSummaryItem, attributedText: NSAttributedString(string: ""), hidden: true)
-            }
-        }
-        let turns = Array(usageDetails.recentTurns.prefix(3))
-        if turns.isEmpty {
-            for (index, item) in recentUsageItems.enumerated() {
-                let text = index == 0 ? menuMutedText("Waiting for usage data") : NSAttributedString(string: "")
-                setUsageMenuItem(item, attributedText: text, hidden: index > 0)
-            }
-        } else {
-            for index in 0..<recentUsageItems.count {
-                let item = recentUsageItems[index]
-                guard index < turns.count else {
-                    setUsageMenuItem(item, attributedText: NSAttributedString(string: ""), hidden: true)
-                    continue
-                }
-
-                setUsageMenuItem(item, attributedText: usageMenuRow(for: turns[index]), hidden: false)
-            }
-        }
-
-        limitDeltaSeparatorItem?.isHidden = false
-        if let limitDelta = usageDetails.limitDelta {
-            limitDeltaItem?.title = "Limit delta  Short \(formatPercentDelta(limitDelta.primary)) | Weekly \(formatPercentDelta(limitDelta.secondary))"
-            limitDeltaItem?.isHidden = false
-        } else {
-            limitDeltaItem?.title = "Limit delta waiting"
-            limitDeltaItem?.isHidden = false
-        }
-        statusItem?.menu?.update()
-    }
-
-    private func updateTurnUsageMenuItem() {
-        turnUsageItem?.state = turnUsageEnabled ? .on : .off
-        updateUsageToastMenuItem()
-    }
-
-    private func updateUsageToastMenuItem() {
-        usageToastItem?.state = usageToastEnabled ? .on : .off
-        usageToastItem?.isEnabled = turnUsageEnabled
-    }
-
     private func updateShowRingsMenuItem() {
         showRingsItem?.state = ringsVisible ? .on : .off
     }
@@ -2884,11 +1747,7 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
 
     private func updateLayoutControlAvailability() {
         let usesBars = displayStyle == .bars
-        barControlsSeparatorItem?.isHidden = !usesBars
         barWidthMenuItem?.isHidden = !usesBars
-        positionMenuItem?.isHidden = !usesBars
-        positionControl?.isEnabled = usesBars
-        positionLabel?.textColor = .secondaryLabelColor
     }
 
     private func updateRingVisibility() {
@@ -2906,16 +1765,18 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
         updateRingVisibility()
     }
 
-    private func saveUsageBarLayout() {
+    private func saveUsageLayout() {
         UserDefaults.standard.set(Double(usageBarOffset.width), forKey: barsOffsetXDefaultsKey)
         UserDefaults.standard.set(Double(usageBarOffset.height), forKey: barsOffsetYDefaultsKey)
+        UserDefaults.standard.set(Double(usageRingOffset.width), forKey: ringsOffsetXDefaultsKey)
+        UserDefaults.standard.set(Double(usageRingOffset.height), forKey: ringsOffsetYDefaultsKey)
         UserDefaults.standard.set(barWidthPreset.rawValue, forKey: barWidthPresetDefaultsKey)
     }
 
-    private func applyUsageBarLayout() {
+    private func applyUsageLayout() {
         ringView.barWidth = barWidthPreset.width
         ringView.barOffset = usageBarOffset
-        saveUsageBarLayout()
+        saveUsageLayout()
         if let currentPetFrameAppKit {
             setPanelFrame(forPetFrameAppKit: currentPetFrameAppKit)
             if ringsVisible {
@@ -2941,33 +1802,8 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
         setRingsVisible(!ringsVisible)
     }
 
-    @objc private func toggleTurnUsage(_ sender: NSMenuItem) {
-        turnUsageEnabled.toggle()
-        UserDefaults.standard.set(turnUsageEnabled, forKey: turnUsageEnabledDefaultsKey)
-        writeTurnUsageSettings()
-        updateTurnUsageMenuItem()
-        updateUsageTimer()
-        if turnUsageEnabled {
-            refreshUsageDetailsNow()
-        } else {
-            clearUsageDetails()
-        }
-    }
-
-    @objc private func toggleUsageToasts(_ sender: NSMenuItem) {
-        usageToastEnabled.toggle()
-        UserDefaults.standard.set(usageToastEnabled, forKey: usageToastEnabledDefaultsKey)
-        updateUsageToastMenuItem()
-        usageToastTimer?.invalidate()
-        usageToastTimer = nil
-        ringView.usageToastTurns = []
-        hasPrimedUsageToast = false
-        lastUsageToastSignatures = [:]
-    }
-
     @objc private func refreshNow(_ sender: NSMenuItem) {
-        refreshUsageDetailsNow()
-        updateState(showToast: false)
+        updateState()
         updateFrame()
         updateRingVisibility()
     }
@@ -2981,25 +1817,20 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
         applyDisplayStyle()
     }
 
-    @objc private func adjustUsageBarsFromSegment(_ sender: NSSegmentedControl) {
-        guard displayStyle == .bars else { return }
-        guard let action = UsageBarPositionAction(rawValue: sender.selectedSegment) else {
+    @objc private func adjustUsageOverlayFromSegment(_ sender: NSSegmentedControl) {
+        guard let action = UsagePositionAction(rawValue: sender.selectedSegment) else {
             return
         }
 
-        switch action {
-        case .left:
-            usageBarOffset.width -= usageBarPositionStep
-        case .right:
-            usageBarOffset.width += usageBarPositionStep
-        case .up:
-            usageBarOffset.height -= usageBarPositionStep
-        case .down:
-            usageBarOffset.height += usageBarPositionStep
-        case .reset:
-            usageBarOffset = .zero
-        }
-        applyUsageBarLayout()
+        let adjustedOffsets = adjustedUsageOffsets(
+            barOffset: usageBarOffset,
+            ringOffset: usageRingOffset,
+            displayStyle: displayStyle,
+            action: action
+        )
+        usageBarOffset = adjustedOffsets.bar
+        usageRingOffset = adjustedOffsets.ring
+        applyUsageLayout()
     }
 
     @objc private func setBarWidthPreset(_ sender: NSMenuItem) {
@@ -3008,7 +1839,7 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
             return
         }
         barWidthPreset = preset
-        applyUsageBarLayout()
+        applyUsageLayout()
     }
 
     @objc private func quit(_ sender: NSMenuItem) {
@@ -3278,115 +2109,6 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
         return String(format: "%.1f%%", percent)
     }
 
-    private func formatPercentDelta(_ delta: Double?) -> String {
-        guard let delta else { return "--" }
-        if abs(delta) < 0.05 {
-            return "0.0%"
-        }
-        return String(format: "%+.1f%%", delta)
-    }
-
-    private func formatTokenCount(_ tokens: Int64) -> String {
-        let value = Double(tokens)
-        guard value >= 1_000 else {
-            return "\(tokens)"
-        }
-
-        let thousands = value / 1_000.0
-        if thousands >= 100 {
-            return String(format: "%.0fk", thousands)
-        }
-        if abs(thousands.rounded() - thousands) < 0.05 {
-            return "\(Int(thousands.rounded()))k"
-        }
-        return String(format: "%.1fk", thousands)
-    }
-
-    private func menuUsageID(for turn: UsageTurnSummary) -> String {
-        let thread = compactThreadID(turn.threadID)
-        let prefix: String
-        if let windowLabel = turn.windowLabel, !windowLabel.isEmpty {
-            prefix = "\(windowLabel)/\(thread)"
-        } else {
-            prefix = thread
-        }
-        guard let turnID = turn.turnID, !turnID.isEmpty else {
-            return prefix
-        }
-        return "\(prefix)/\(compactThreadID(turnID))"
-    }
-
-    private func compactThreadID(_ threadID: String) -> String {
-        let compact = threadID.replacingOccurrences(of: "-", with: "")
-        guard compact.count > 4 else {
-            return compact
-        }
-        return String(compact.suffix(4))
-    }
-
-    private func usageMenuRow(for turn: UsageTurnSummary) -> NSAttributedString {
-        let text = NSMutableAttributedString()
-        text.append(NSAttributedString(string: menuUsageID(for: turn), attributes: menuMonospaceAttributes(color: .secondaryLabelColor, weight: .semibold)))
-        text.append(NSAttributedString(string: "  ", attributes: menuMonospaceAttributes(color: .secondaryLabelColor)))
-        text.append(NSAttributedString(string: "\(turn.callCount)c", attributes: menuMonospaceAttributes(color: menuUsedColor(), weight: .semibold)))
-        text.append(NSAttributedString(string: "  ", attributes: menuMonospaceAttributes(color: .secondaryLabelColor)))
-        appendMenuMetric("Used ", formatTokenCount(turn.effectiveTokens), color: menuUsedColor(), to: text)
-        return text
-    }
-
-    private func usageSummaryRow(for summary: UsageSummary) -> NSAttributedString {
-        let text = NSMutableAttributedString()
-        text.append(NSAttributedString(string: "Used  ", attributes: menuMonospaceAttributes(color: .secondaryLabelColor, weight: .semibold)))
-        var appendedMetric = false
-        if let today = summary.today {
-            appendMenuMetric("Today ", formatTokenCount(today.effectiveTokens), color: menuUsedColor(), to: text)
-            appendedMetric = true
-        }
-        if let latestSession = summary.latestSession {
-            if appendedMetric {
-                text.append(NSAttributedString(string: "  |  ", attributes: menuMonospaceAttributes(color: .secondaryLabelColor)))
-            }
-            appendMenuMetric("This chat ", formatTokenCount(latestSession.effectiveTokens), color: menuUsedColor(), to: text)
-        }
-        return text
-    }
-
-    private func appendMenuMetric(_ label: String, _ value: String, color: NSColor, to text: NSMutableAttributedString) {
-        text.append(NSAttributedString(string: label, attributes: menuMonospaceAttributes(color: .secondaryLabelColor, weight: .medium)))
-        text.append(NSAttributedString(string: value, attributes: menuMonospaceAttributes(color: color, weight: .semibold)))
-    }
-
-    private func menuHeaderText(_ value: String) -> NSAttributedString {
-        NSAttributedString(
-            string: value,
-            attributes: [
-                .font: NSFont.systemFont(ofSize: 12.0, weight: .semibold),
-                .foregroundColor: NSColor.labelColor.withAlphaComponent(0.74)
-            ]
-        )
-    }
-
-    private func menuMutedText(_ value: String) -> NSAttributedString {
-        NSAttributedString(
-            string: value,
-            attributes: [
-                .font: NSFont.menuFont(ofSize: 12.0),
-                .foregroundColor: NSColor.secondaryLabelColor
-            ]
-        )
-    }
-
-    private func menuMonospaceAttributes(color: NSColor, weight: NSFont.Weight = .regular) -> [NSAttributedString.Key: Any] {
-        [
-            .font: NSFont.monospacedSystemFont(ofSize: 11.6, weight: weight),
-            .foregroundColor: color
-        ]
-    }
-
-    private func menuUsedColor() -> NSColor {
-        NSColor(calibratedRed: 0.00, green: 0.62, blue: 0.52, alpha: 1.0)
-    }
-
     private func formatAge(since date: Date) -> String {
         let seconds = max(0, Date().timeIntervalSince(date))
         if seconds < 60 {
@@ -3412,11 +2134,8 @@ func renderPreview(config: LimitRingsConfig) -> Bool {
         ? samplePreviewLimitState()
         : LimitStateReader(
             logsPath: config.logsPath,
-            turnUsageStatePath: config.turnUsageStatePath,
-            turnUsageSummaryPath: config.turnUsageSummaryPath,
             codexHome: config.codexHome
         ).readLatest()
-    let toastTurns = config.previewShowsToasts ? samplePreviewUsageTurns() : []
     let size = CGSize(width: config.fallbackSize, height: config.fallbackSize)
     let image = NSImage(size: size)
     image.lockFocus()
@@ -3426,7 +2145,6 @@ func renderPreview(config: LimitRingsConfig) -> Bool {
         barWidth: UsageBarWidthPreset.normal.width,
         barOffset: .zero,
         checkPulse: 0.55,
-        usageToastTurns: toastTurns,
         previewUsesBackground: config.previewUsesBackground
     ).draw(in: CGRect(origin: .zero, size: size))
     image.unlockFocus()
@@ -3464,27 +2182,6 @@ private func samplePreviewLimitState() -> LimitState {
     )
 }
 
-private func samplePreviewUsageTurns() -> [UsageTurnSummary] {
-    let now = Date()
-    let calls = [
-        UsageCallSummary(observedAt: now, inputTokens: 9_200, cachedTokens: 2_400, outputTokens: 1_100, effectiveTokens: 7_900),
-        UsageCallSummary(observedAt: now, inputTokens: 9_600, cachedTokens: 2_700, outputTokens: 1_100, effectiveTokens: 8_000)
-    ]
-    return [
-        UsageTurnSummary(
-            threadID: "thread-preview-0001",
-            turnID: "turn-preview-a327",
-            windowLabel: "W0",
-            observedAt: now,
-            inputTokens: 18_800,
-            cachedTokens: 5_100,
-            outputTokens: 2_200,
-            effectiveTokens: 15_900,
-            calls: calls
-        )
-    ]
-}
-
 func parseConfig() -> LimitRingsConfig? {
     let home = FileManager.default.homeDirectoryForCurrentUser
     let codexHome = URL(fileURLWithPath: ProcessInfo.processInfo.environment["CODEX_HOME"] ?? home.appendingPathComponent(".codex").path)
@@ -3492,9 +2189,6 @@ func parseConfig() -> LimitRingsConfig? {
         codexHome: codexHome,
         globalStatePath: codexHome.appendingPathComponent(".codex-global-state.json"),
         logsPath: defaultLogsPath(codexHome: codexHome),
-        turnUsageStatePath: defaultTurnUsageStatePath(codexHome: codexHome),
-        turnUsageSummaryPath: defaultTurnUsageSummaryPath(codexHome: codexHome),
-        turnUsageSettingsPath: defaultTurnUsageSettingsPath(codexHome: codexHome),
         previewPath: nil
     )
 
@@ -3504,7 +2198,7 @@ func parseConfig() -> LimitRingsConfig? {
         switch arg {
         case "--help", "-h":
             print("""
-            Usage: codex-pet-limit-rings [--preview PATH] [--preview-style rings|bars] [--preview-sample] [--preview-toasts] [--preview-background] [--codex-home PATH] [--logs PATH] [--turn-usage-state PATH] [--turn-usage-summary PATH] [--state PATH] [--no-mouse-monitor]
+            Usage: codex-pet-limit-rings [--preview PATH] [--preview-style rings|bars] [--preview-sample] [--preview-background] [--codex-home PATH] [--logs PATH] [--state PATH] [--no-mouse-monitor]
 
             Draws a transparent Codex rate-limit overlay near the current pet using local Codex logs.
             """)
@@ -3522,8 +2216,6 @@ func parseConfig() -> LimitRingsConfig? {
             config.previewStyle = style
         case "--preview-sample":
             config.previewUsesSampleData = true
-        case "--preview-toasts":
-            config.previewShowsToasts = true
         case "--preview-background":
             config.previewUsesBackground = true
         case "--codex-home":
@@ -3533,21 +2225,10 @@ func parseConfig() -> LimitRingsConfig? {
             config.codexHome = url
             config.globalStatePath = url.appendingPathComponent(".codex-global-state.json")
             config.logsPath = defaultLogsPath(codexHome: url)
-            config.turnUsageStatePath = defaultTurnUsageStatePath(codexHome: url)
-            config.turnUsageSummaryPath = defaultTurnUsageSummaryPath(codexHome: url)
-            config.turnUsageSettingsPath = defaultTurnUsageSettingsPath(codexHome: url)
         case "--logs":
             guard let value = args.first else { return nil }
             args.removeFirst()
             config.logsPath = URL(fileURLWithPath: value)
-        case "--turn-usage-state":
-            guard let value = args.first else { return nil }
-            args.removeFirst()
-            config.turnUsageStatePath = URL(fileURLWithPath: value)
-        case "--turn-usage-summary":
-            guard let value = args.first else { return nil }
-            args.removeFirst()
-            config.turnUsageSummaryPath = URL(fileURLWithPath: value)
         case "--state":
             guard let value = args.first else { return nil }
             args.removeFirst()
@@ -3594,18 +2275,6 @@ private func newestExistingPath(_ candidates: [URL]) -> URL? {
         }
     }
     return newest?.url
-}
-
-func defaultTurnUsageStatePath(codexHome: URL) -> URL {
-    codexHome.appendingPathComponent("codex-pet-limit-rings/turn-usage.json")
-}
-
-func defaultTurnUsageSummaryPath(codexHome: URL) -> URL {
-    codexHome.appendingPathComponent("codex-pet-limit-rings/turn-usage-summary.json")
-}
-
-func defaultTurnUsageSettingsPath(codexHome: URL) -> URL {
-    codexHome.appendingPathComponent("codex-pet-limit-rings/settings.json")
 }
 
 // LIMIT_RINGS_MAIN_BEGIN

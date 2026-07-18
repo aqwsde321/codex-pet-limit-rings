@@ -30,6 +30,8 @@ if [[ "$OLD_APP" != "$DEFAULT_OLD_APP" ]]; then
   exit 2
 fi
 
+"$ROOT/tools/cleanup-legacy-turn-usage.sh"
+
 mkdir -p "$(dirname "$APP")" "$AGENT_DIR" "$HOME/Library/Logs"
 
 launchctl bootout "$GUI_TARGET" "$AGENT" >/dev/null 2>&1 || true

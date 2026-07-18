@@ -7,23 +7,18 @@ The usage overlay is pet-agnostic. It works with any pet Codex displays because 
 ## Experience Contract
 
 - A usage-overlay icon appears in the macOS menu bar.
-- `Track Turn Usage` defaults to off and toggles local turn-usage log reads, the recent-turn menu section, and turn-usage toasts.
 - `Show Usage Overlay` toggles the overlay without quitting the app.
 - `Refresh Now` rereads usage and pet-position state.
 - `Display Style` switches between the default rings and compact bars.
-- In bar style, bar-only layout controls appear under `Display Style`; `Bar Width` is shown first, followed by an indented `Position` control.
-- In bar style, `Position` uses an inline menu control so position buttons can be clicked repeatedly without reopening the menu. It moves only the bar readouts; turn-usage toasts stay anchored near the pet like ring-style toasts.
-- In bar style, `Bar Width` switches between short, normal, and wide bars. Bar-only controls are hidden in ring style.
+- `Position`은 링과 바 모두에서 표시되며, 각 스타일의 위치를 독립적으로 저장합니다. 바 스타일에서는 `Bar Width`도 함께 표시됩니다.
+- `Bar Width`는 바 스타일에서만 표시되며 짧게, 보통, 넓게 중 하나를 선택합니다.
 - The menu summary includes the source and age of the current rate-limit snapshot.
 - A transient app-server failure keeps the last successful snapshot for up to 30 minutes while its reset window remains current; the menu labels this source `Cached`.
 - Expired rate-limit events are treated as unavailable instead of being shown as current usage.
 - When no current rate-limit event is available, the overlay shows compact `NO DATA` text instead of stale percentages.
-- When `Track Turn Usage` is enabled, the menu shows compact color-coded usage-token counts for up to three recent turn groups.
-- When `Track Turn Usage` is enabled, the menu shows the latest short-window and weekly limit delta from consecutive rate-limit events.
-- When `Track Turn Usage` is enabled, a short toast appears near the overlay when a new turn usage total is observed.
 - In bar style, two compact bars below the pet show short-window and weekly remaining capacity.
 - In bar style, percentages and reset countdowns are shown beside the bars.
-- Ring style stays centered around the pet and shows the same short-window and weekly values in two fixed lower translucent readout badges.
+- 링 스타일의 기본 위치는 펫 중앙이며, 이동 후에도 같은 짧은 사용량 창·주간 값을 아래쪽 고정 반투명 배지 두 개에 표시합니다.
 - Dragging the pet makes the overlay follow the gesture immediately while Codex persists the new position when mouse monitoring is enabled.
 - Closing the Codex pet hides the overlay.
 - Multi-display positioning uses the screen containing the pet bounds, not the currently focused screen.
@@ -37,14 +32,7 @@ The app reads the current Codex rate-limit snapshot first, then falls back to lo
 - Codex CLI `app-server --stdio`: current account limit snapshot via `account/rateLimits/read`. The app checks explicit environment overrides, Codex app-bundle paths, and standard Homebrew paths. The `codex` limit is rendered as the main short-window and weekly rings; other limit ids are shown as additional model dots.
 - `~/.codex/.codex-global-state.json`: current pet bounds, using `electron-avatar-overlay-bounds.mascot`.
 - `electron-avatar-overlay-open` in the same state file: whether the Codex pet is currently open.
-- `~/.codex/sqlite/logs_2.sqlite` or legacy `~/.codex/logs_2.sqlite`: fallback rate-limit source using the newest unexpired websocket `codex.rate_limits` event, plus recent response `usage` token counters from `target = 'codex_api::endpoint::responses_websocket'`.
-- `~/.codex/sessions/**/rollout-*.jsonl`: optional `Stop` hook worker source for `collaboration_mode_kind`, used only to skip Plan mode turns from finalized turn-usage records.
-- `~/.codex/codex-pet-limit-rings/settings.json`: app-written `Track Turn Usage` setting used by the optional hook to no-op when tracking is off.
-- `~/.codex/codex-pet-limit-rings/turn-usage-queue.jsonl`: optional bounded local queue used by the `Stop` hook worker, containing ids, the local transcript path when Codex provides one, enqueue timestamps, and retry counters.
-- `~/.codex/codex-pet-limit-rings/turn-usage.json`: optional finalized turn-usage records written by the opt-in `Stop` hook, containing ids, Plan mode skip markers, response ids when present, timestamps, call counts, raw token counters, and goal-style `effective_tokens`.
-- `~/.codex/codex-pet-limit-rings/turn-usage-ledger.json`: optional bounded per-turn ledger written by the opt-in `Stop` hook, used to avoid duplicate summary accumulation.
-- `~/.codex/codex-pet-limit-rings/turn-usage-summary.json`: optional ledger rollup written by the opt-in `Stop` hook, containing today's and the latest session's token totals.
-- `~/.codex/codex-pet-limit-rings/turn-usage-hook.log`: optional bounded hook diagnostic log with hook status, timestamps, ids, mode kind when detected, Plan mode skip markers, and call counts.
+- `~/.codex/sqlite/logs_2.sqlite` 또는 legacy `~/.codex/logs_2.sqlite`: 만료되지 않은 최신 websocket `codex.rate_limits` 이벤트의 fallback 소스입니다.
 
 For rate limits, the fallback order is app-server, a current SQLite `codex.rate_limits` event, then the last successful app-server snapshot when it is no older than 30 minutes and its reset window is still current. Only then does the overlay show `NO DATA`.
 
@@ -61,13 +49,9 @@ Use `--no-mouse-monitor` to disable global mouse event monitoring; this disables
 - Colors are derived from remaining capacity: green/blue for healthy, amber for low, red for critical.
 - Bar outlines stay visible, and a short moving gradient sweep appears on each bar after local usage-log checks, which normally run every 20 seconds.
 - Ring style uses the same color model and is drawn around the pet with fixed lower translucent readouts.
-- When `Track Turn Usage` is enabled, menu token details include a bounded-ledger `Used` rollup and recent `thread_id + turn_id` groups, with reusable `W0` through `W9` labels assigned per `thread_id`.
-- When the optional `Stop` hook is installed, turn-usage rows are merged from the hook-written state file and recent local response `usage` rows in SQLite; duplicate turns keep the record with more observed calls or token counters. Turn rows and hook summaries older than 24 hours are hidden instead of being shown as current usage.
-- When `Track Turn Usage` and `Show Usage Toasts` are enabled, the usage toast shows the latest goal-style `Used` token counter for a few seconds.
 - The overlay is drawn with no panel background, so only the bars/rings and text are visible.
-- Menu-driven display style, bar position offsets, and bar-width presets are saved in `UserDefaults`.
+- 메뉴에서 선택한 표시 스타일, 링·바의 개별 위치 오프셋, 바 너비는 `UserDefaults`에 저장됩니다.
 
-See `docs/recent-usage.md` for the token-counter menu semantics, raw counter inspection, window-slot labels, turn grouping, and limit-delta caveats.
 
 See `docs/solutions/workflow-issues/usage-overlay-no-data-diagnosis.md` for the evidence-first diagnosis sequence after a Codex update.
 
@@ -94,31 +78,9 @@ The LaunchAgent starts the app at login. The installer also removes the earlier 
 
 `tools/uninstall-limit-rings.sh` unloads the LaunchAgent, removes the app bundle, clears saved overlay visibility and layout preferences, and also cleans up those earlier prototype names.
 
+설치와 제거 과정에서 이전 릴리스가 남긴 턴별 사용량 hook 설정과 로컬 상태도 정리합니다.
+
 The build, install, and uninstall scripts refuse destructive app-bundle operations outside the repository `tmp/` app path or the default `~/Applications/CodexPetLimitRings.app` and `~/Applications/CodexLimitAura.app` paths.
-
-Turn usage can optionally use a Codex `Stop` hook. This is separate from the app installer because it modifies Codex hook config:
-
-```bash
-tools/install-turn-usage-hook.sh
-```
-
-The hook installer copies the hook script into:
-
-```text
-~/.codex/codex-pet-limit-rings/hooks/codex-turn-usage-stop-hook.py
-```
-
-and registers an inline `[[hooks.Stop]]` entry in `~/.codex/config.toml`. It also enables `hooks` in the same file. Restart Codex sessions after installing or uninstalling the hook so Codex reloads hook configuration.
-
-This hook path has more setup than the default SQLite fallback: Codex must trust the local hook command, and existing sessions must restart before it runs. It is still optional. Use it when you want finalized turn-usage records from Codex's `Stop` event; the hook queues the turn and returns immediately, then a short-lived worker reads SQLite and writes the compact result. The app still keeps the periodic recent-log polling fallback and merges both sources.
-
-The hook remains installed when the menu's `Track Turn Usage` item is off, but it exits immediately based on the app-written settings file and does not update turn-usage state.
-
-To remove only the turn-usage hook:
-
-```bash
-tools/uninstall-turn-usage-hook.sh
-```
 
 ## Development
 
@@ -133,6 +95,7 @@ Render a static preview:
 ```bash
 swiftc tools/codex-pet-limit-rings.swift -o tmp/codex-pet-limit-rings -framework AppKit -lsqlite3
 tmp/codex-pet-limit-rings --preview tmp/limit-rings-preview.png --size 164
+tools/test-cleanup-legacy-turn-usage.sh
 ```
 
 ## Codex Skill
