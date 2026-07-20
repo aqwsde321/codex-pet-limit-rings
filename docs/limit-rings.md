@@ -30,7 +30,7 @@ The usage overlay is pet-agnostic. It works with any pet Codex displays because 
 The app reads the current Codex rate-limit snapshot first, then falls back to local Codex files:
 
 - Codex CLI `app-server --stdio`: current account limit snapshot via `account/rateLimits/read`. The app checks explicit environment overrides, Codex app-bundle paths, and standard Homebrew paths. The `codex` limit is rendered as the main short-window and weekly rings; other limit ids are shown as additional model dots.
-- `~/.codex/.codex-global-state.json`: current pet bounds, using `electron-avatar-overlay-bounds.mascot`.
+- `~/.codex/.codex-global-state.json`: 현재 팻 위치. 명시적 `anchor`, 기존 `width`/`height`/`mascot`, `x`/`y`만 저장하는 anchor-only 형식을 순서대로 읽습니다. 크기가 없는 형식에는 기존 상세 bounds와 실제 렌더에서 확인한 팻 크기 `80x87`을 사용합니다.
 - `electron-avatar-overlay-open` in the same state file: whether the Codex pet is currently open.
 - `~/.codex/sqlite/logs_2.sqlite` 또는 legacy `~/.codex/logs_2.sqlite`: 만료되지 않은 최신 websocket `codex.rate_limits` 이벤트의 fallback 소스입니다.
 
@@ -46,6 +46,7 @@ Use `--no-mouse-monitor` to disable global mouse event monitoring; this disables
 - Ring style is the default and draws short-window and weekly remaining capacity around the pet with fixed lower translucent readouts.
 - Bar style draws the short-window remaining percentage and reset countdown in the top bar.
 - Bar style draws the weekly remaining percentage and reset countdown in the bottom bar.
+- 주간 값이 없더라도 short-window 바는 첫 번째 슬롯 위치를 유지합니다.
 - Colors are derived from remaining capacity: green/blue for healthy, amber for low, red for critical.
 - Bar outlines stay visible, and a short moving gradient sweep appears on each bar after local usage-log checks, which normally run every 20 seconds.
 - Ring style uses the same color model and is drawn around the pet with fixed lower translucent readouts.

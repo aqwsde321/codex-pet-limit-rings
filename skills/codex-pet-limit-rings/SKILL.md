@@ -75,14 +75,14 @@ launchctl print "gui/$(id -u)/com.codex-pet.limit-rings" >/dev/null
 
 ## 업데이트 회귀 진단
 
-Codex 업데이트 후 오버레이가 `NO DATA`를 표시하면 설치된 바이너리를 먼저 확인합니다. 다음으로 `codex app-server --stdio`의 `account/rateLimits/read`와 활성 SQLite 로그의 최신 `codex.rate_limits` 행을 각각 검증하고, 실패한 경로만 수정합니다. 저장소 작업에서는 `docs/solutions/workflow-issues/usage-overlay-no-data-diagnosis.md`를 참고합니다.
+Codex 업데이트 후 오버레이가 `NO DATA`를 표시하면 설치된 바이너리를 먼저 확인합니다. 다음으로 `codex app-server --stdio`의 `account/rateLimits/read`와 활성 SQLite 로그의 최신 `codex.rate_limits` 행을 각각 검증하고, 실패한 경로만 수정합니다. `NO DATA`도 보이지 않으면 usage 경로보다 `electron-avatar-overlay-open`과 `electron-avatar-overlay-bounds` 형식을 먼저 확인합니다. 저장소 작업에서는 `docs/solutions/workflow-issues/usage-overlay-no-data-diagnosis.md`를 참고합니다.
 
 ## Data Contract
 
 The rings read:
 
 - Codex CLI `app-server --stdio` for the current `account/rateLimits/read` snapshot. Resolve explicit environment overrides, Codex app-bundle paths, and standard Homebrew paths because LaunchAgent PATH may omit Homebrew.
-- `~/.codex/.codex-global-state.json` for `electron-avatar-overlay-open` and `electron-avatar-overlay-bounds.mascot`.
+- `~/.codex/.codex-global-state.json`에서 `electron-avatar-overlay-open`과 팻 bounds를 읽습니다. 명시적 `anchor`, 기존 `width`/`height`/`mascot`, `x`/`y` anchor-only 형식을 모두 지원합니다.
 - `~/.codex/sqlite/logs_2.sqlite` 또는 legacy `~/.codex/logs_2.sqlite`에서 최신 로컬 websocket `codex.rate_limits` fallback을 읽습니다.
 
 

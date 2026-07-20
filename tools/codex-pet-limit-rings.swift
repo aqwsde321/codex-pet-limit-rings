@@ -140,6 +140,11 @@ func adjustedUsageRingOrigin(
     return CGPoint(x: origin.x + offset.width, y: origin.y + yOffset)
 }
 
+func usageProgressPanelOriginY(visibleRowCount: Int, barOffsetY: CGFloat) -> CGFloat {
+    let missingRowCount = max(2 - visibleRowCount, 0)
+    return 4.0 - barOffsetY + CGFloat(missingRowCount) * 21.0
+}
+
 private struct EventPayload: Decodable {
     var type: String
     var plan_type: String?
@@ -649,6 +654,8 @@ struct PetFramesTopLeft {
 
 final class PetFrameReader {
     private let globalStatePath: URL
+    // ponytail: anchor-only bounds에는 팻 크기가 없음, Codex가 크기를 저장하거나 기본 크기를 바꾸면 재검토
+    private let anchorOnlyMascotSize = CGSize(width: 80, height: 87)
 
     init(globalStatePath: URL) {
         self.globalStatePath = globalStatePath
@@ -660,22 +667,35 @@ final class PetFrameReader {
               isAvatarOverlayOpen(root),
               let bounds = root["electron-avatar-overlay-bounds"] as? [String: Any],
               let x = number(bounds["x"]),
-              let y = number(bounds["y"]),
-              let overlayWidth = number(bounds["width"]),
-              let overlayHeight = number(bounds["height"]),
-              let mascotPayload = bounds["mascot"] as? [String: Any],
-              let left = number(mascotPayload["left"]),
-              let top = number(mascotPayload["top"]),
-              let width = number(mascotPayload["width"]),
-              let height = number(mascotPayload["height"]) else {
+              let y = number(bounds["y"]) else {
             return nil
         }
 
-        let persistedOverlay = CGRect(x: x, y: y, width: overlayWidth, height: overlayHeight)
-        let liveOverlay = preferLiveOverlay ? liveCodexOverlayBounds(matching: liveReference ?? persistedOverlay, expectedSize: persistedOverlay.size) : nil
-        let overlay = liveOverlay ?? persistedOverlay
-        let mascot = CGRect(x: overlay.minX + left, y: overlay.minY + top, width: width, height: height)
-        return PetFramesTopLeft(mascot: mascot, overlay: overlay, usedLiveOverlay: liveOverlay != nil)
+        if let anchorPayload = bounds["anchor"] as? [String: Any],
+           let anchorX = number(anchorPayload["x"]),
+           let anchorY = number(anchorPayload["y"]),
+           let anchorWidth = number(anchorPayload["width"]),
+           let anchorHeight = number(anchorPayload["height"]) {
+            let mascot = CGRect(x: anchorX, y: anchorY, width: anchorWidth, height: anchorHeight)
+            return PetFramesTopLeft(mascot: mascot, overlay: mascot, usedLiveOverlay: false)
+        }
+
+        if let overlayWidth = number(bounds["width"]),
+           let overlayHeight = number(bounds["height"]),
+           let mascotPayload = bounds["mascot"] as? [String: Any],
+           let left = number(mascotPayload["left"]),
+           let top = number(mascotPayload["top"]),
+           let width = number(mascotPayload["width"]),
+           let height = number(mascotPayload["height"]) {
+            let persistedOverlay = CGRect(x: x, y: y, width: overlayWidth, height: overlayHeight)
+            let liveOverlay = preferLiveOverlay ? liveCodexOverlayBounds(matching: liveReference ?? persistedOverlay, expectedSize: persistedOverlay.size) : nil
+            let overlay = liveOverlay ?? persistedOverlay
+            let mascot = CGRect(x: overlay.minX + left, y: overlay.minY + top, width: width, height: height)
+            return PetFramesTopLeft(mascot: mascot, overlay: overlay, usedLiveOverlay: liveOverlay != nil)
+        }
+
+        let mascot = CGRect(origin: CGPoint(x: x, y: y), size: anchorOnlyMascotSize)
+        return PetFramesTopLeft(mascot: mascot, overlay: mascot, usedLiveOverlay: false)
     }
 
     func readPetFrameTopLeft(preferLiveOverlay: Bool = false) -> CGRect? {
@@ -937,7 +957,7 @@ struct LimitRingRenderer {
         let panelHeight = verticalPadding * 2.0 + CGFloat(rows.count) * rowHeight + CGFloat(max(rows.count - 1, 0)) * rowGap
         let panelRect = CGRect(
             x: rect.midX - panelWidth / 2.0 + barOffset.width,
-            y: 4.0 - barOffset.height,
+            y: usageProgressPanelOriginY(visibleRowCount: rows.count, barOffsetY: barOffset.height),
             width: panelWidth,
             height: panelHeight
         )

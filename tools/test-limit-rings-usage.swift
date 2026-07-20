@@ -33,6 +33,10 @@ struct LimitRingsUsageTests {
             try testUsagePositionAdjustment()
             try testUsageStyleOffsetsStayIndependent()
             try testUsageRingPositionCoordinates()
+            try testSingleUsageBarKeepsPrimaryRowPosition()
+            try testPetFrameReaderSupportsLegacyBounds()
+            try testPetFrameReaderPrefersExplicitAnchorBounds()
+            try testPetFrameReaderSupportsAnchorOnlyBounds()
             print("limit-rings usage tests passed")
         } catch {
             fputs("limit-rings usage tests failed: \(error)\n", stderr)
@@ -96,6 +100,113 @@ struct LimitRingsUsageTests {
             adjustedUsageRingOrigin(origin, offset: upAndRightOffset, coordinateSpace: .appKit)
                 == CGPoint(x: 104, y: 204),
             "expected AppKit coordinates to move the ring up and right"
+        )
+    }
+
+    private static func testSingleUsageBarKeepsPrimaryRowPosition() throws {
+        try expect(
+            usageProgressPanelOriginY(visibleRowCount: 1, barOffsetY: 0) == 25,
+            "expected a single primary bar to keep the first-row position"
+        )
+        try expect(
+            usageProgressPanelOriginY(visibleRowCount: 2, barOffsetY: 0) == 4,
+            "expected two bars to keep the existing panel position"
+        )
+    }
+
+    private static func testPetFrameReaderSupportsLegacyBounds() throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("codex-limit-rings-legacy-pet-frame-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let statePath = root.appendingPathComponent("state.json")
+        let state = """
+        {
+          "electron-avatar-overlay-open": true,
+          "electron-avatar-overlay-bounds": {
+            "x": 1516,
+            "y": 702,
+            "width": 356,
+            "height": 320,
+            "mascot": {"left": 248, "top": 225, "width": 80, "height": 87}
+          }
+        }
+        """
+        try Data(state.utf8).write(to: statePath)
+
+        let frames = PetFrameReader(globalStatePath: statePath).readPetFramesTopLeft()
+        try expect(
+            frames?.overlay == CGRect(x: 1516, y: 702, width: 356, height: 320),
+            "expected legacy overlay bounds to remain supported"
+        )
+        try expect(
+            frames?.mascot == CGRect(x: 1764, y: 927, width: 80, height: 87),
+            "expected legacy nested mascot bounds to remain supported"
+        )
+    }
+
+    private static func testPetFrameReaderSupportsAnchorOnlyBounds() throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("codex-limit-rings-anchor-pet-frame-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let statePath = root.appendingPathComponent("state.json")
+        let state = """
+        {
+          "electron-avatar-overlay-open": true,
+          "electron-avatar-overlay-bounds": {
+            "x": 1288,
+            "y": 780,
+            "displayBounds": {"x": 0, "y": 0, "width": 1440, "height": 900},
+            "displayId": 1,
+            "placement": "top-end"
+          }
+        }
+        """
+        try Data(state.utf8).write(to: statePath)
+
+        let frames = PetFrameReader(globalStatePath: statePath).readPetFramesTopLeft()
+        let expectedMascot = CGRect(x: 1288, y: 780, width: 80, height: 87)
+        try expect(
+            frames?.mascot == expectedMascot,
+            "expected anchor-only Codex bounds to use the known Codex mascot size"
+        )
+        try expect(
+            frames?.overlay == expectedMascot,
+            "expected anchor-only Codex bounds to track the mascot frame"
+        )
+    }
+
+    private static func testPetFrameReaderPrefersExplicitAnchorBounds() throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("codex-limit-rings-explicit-anchor-frame-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let statePath = root.appendingPathComponent("state.json")
+        let state = """
+        {
+          "electron-avatar-overlay-open": true,
+          "electron-avatar-overlay-bounds": {
+            "x": 1200,
+            "y": 700,
+            "anchor": {"x": 1288, "y": 780, "width": 96, "height": 104}
+          }
+        }
+        """
+        try Data(state.utf8).write(to: statePath)
+
+        let frames = PetFrameReader(globalStatePath: statePath).readPetFramesTopLeft()
+        let expectedMascot = CGRect(x: 1288, y: 780, width: 96, height: 104)
+        try expect(
+            frames?.mascot == expectedMascot,
+            "expected explicit Codex anchor bounds to take precedence over top-level coordinates"
+        )
+        try expect(
+            frames?.overlay == expectedMascot,
+            "expected explicit Codex anchor bounds to define the tracked frame"
         )
     }
 

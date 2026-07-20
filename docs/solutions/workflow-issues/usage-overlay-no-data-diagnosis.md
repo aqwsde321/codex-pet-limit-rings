@@ -1,12 +1,13 @@
 ---
 title: Codex 업데이트 후 usage overlay 미표시 진단
 date: 2026-07-10
+updated: 2026-07-19
 category: workflow-issues
 module: codex-pet-limit-rings
 problem_type: debugging
 component: rate-limit-overlay
 severity: high
-tags: [codex, app-server, sqlite, rate-limit, usage-overlay, launch-agent]
+tags: [codex, app-server, sqlite, rate-limit, usage-overlay, pet-frame, launch-agent]
 related_files:
   - tools/codex-pet-limit-rings.swift
   - tools/test-limit-rings-usage.swift
@@ -16,13 +17,14 @@ related_files:
 
 ## Problem
 
-Codex 업데이트 뒤 앱은 실행 중이지만 링·바가 `NO DATA`를 표시했다. rate-limit 공급 경로인 app-server와 SQLite fallback을 분리해 조사해야 했다.
+Codex 업데이트 뒤 앱은 실행 중이지만 링·바가 `NO DATA`를 표시하거나 오버레이 전체가 사라졌다. `NO DATA` 표시 여부로 usage 공급 경로와 팻 위치 경로를 먼저 분리해야 했다.
 
 ## Diagnosis Order
 
 ### 1. 증상 범위를 분리한다
 
-- 링·바의 남은 퍼센트가 없으면 rate-limit snapshot 경로를 조사한다.
+- `NO DATA`가 보이면 rate-limit snapshot 경로를 조사한다.
+- `NO DATA`도 보이지 않으면 `electron-avatar-overlay-open`과 `electron-avatar-overlay-bounds`를 먼저 확인한다. 팻 프레임을 읽지 못하면 오버레이 패널 자체가 숨겨지므로 usage 공급 경로가 정상이어도 아무것도 보이지 않는다.
 
 Codex 자체 usage 화면에 값이 있으면 이를 기대값으로 기록한다. 예를 들어 Codex 화면의 `99% 남음`은 app-server의 `usedPercent: 1`과 대응한다.
 
@@ -126,6 +128,23 @@ Codex CLI `0.142.0` 업데이트 후 overlay가 `NO DATA` 상태가 됐다.
 
 따라서 app-server CLI 탐색 실패 후 빈 SQLite fallback으로 내려간 것이 원인이었다. CLI 후보에 `/opt/homebrew/bin/codex`와 `/usr/local/bin/codex`를 추가하고 회귀 테스트를 남겼다.
 
+## 2026-07-19 Incident: 오버레이 전체 미표시
+
+Codex `26.715.31925` 업데이트 뒤 링·바뿐 아니라 `NO DATA`도 보이지 않았다.
+
+확인 결과:
+
+- 설치 앱과 LaunchAgent는 실행 중이었다.
+- `account/rateLimits/read`는 정상 응답했다.
+- `electron-avatar-overlay-open`은 `true`였다.
+- 활성 `electron-avatar-overlay-bounds`에는 `x`, `y`, `displayBounds`, `displayId`, `placement`만 있고 기존 `width`, `height`, `mascot`이 없었다.
+- `PetFrameReader`는 기존 필드를 모두 필수로 검사해 `nil`을 반환했고, `LimitRingsApp.updateFrame()`은 패널을 숨겼다.
+- 업데이트된 Codex 번들은 `x`/`y`를 팻 anchor로 저장하지만 크기는 생략했다. 같은 상태 파일의 기존 상세 bounds와 실제 렌더에서 팻 크기 `80x87`을 확인했다.
+
+따라서 usage 조회가 아니라 팻 프레임 schema 호환 문제였다. 기존 상세 bounds는 그대로 지원하고, anchor-only bounds는 `x`/`y`와 `80x87` 크기로 복원하도록 수정했다. 초기 `112x121` 추정은 팻 하단을 34포인트 낮게 계산했고, 주간 값이 없을 때 primary 바가 둘째 슬롯 높이로 내려가는 21포인트가 더해져 큰 간격이 생겼다. 팻 프레임과 단일 바 위치 회귀 테스트를 추가했다.
+
+같은 시점에 Codex 팻의 대화 목록도 비어 있었지만 companion app과는 별도 문제였다. [공식 Pets 문서](https://learn.chatgpt.com/docs/pets?surface=app)는 둘 이상의 채팅에 activity가 있을 때 tray에서 채팅을 선택할 수 있다고 설명한다. 당시 로그에는 복수 conversation 이벤트가 있었지만 `avatarOverlay` renderer는 `unknown conversation`과 `Conversation state not found`를 반복했다. 동일 오류는 이전 로그에도 있어 이번 빌드가 최초 원인이라고 단정하지 않는다. 이 앱은 투명한 클릭 통과 패널만 추가하므로 Codex의 activity tray 상태를 변경하지 않는다.
+
 ## Verification
 
 ```bash
@@ -150,4 +169,5 @@ launchctl print "gui/$(id -u)/com.codex-pet.limit-rings"
 - stdin을 유지한 app-server 세션에서 응답을 확인했는가?
 - 활성 SQLite DB와 실제 최신 rate-limit 행을 확인했는가?
 - request, decode, SQL 중 실패한 한 경로만 수정했는가?
+- `NO DATA`도 없으면 팻 open 상태와 bounds 필드 형식을 확인했는가?
 - 회귀 테스트, 설치, 20초 poll을 모두 검증했는가?
