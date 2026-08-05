@@ -32,6 +32,7 @@ Notable changes to `codex-pet-limit-rings` are recorded here.
 
 ### Fixed
 
+- 제거기가 LaunchAgent와 프로세스 종료를 검증하고 앱 로그, preferences, 이전 cache까지 지우며, 원라인 설치·제거 명령이 다운로드 실패를 숨기지 않도록 수정했습니다.
 - Codex `26.715.31925`의 anchor-only 팻 위치를 지원하고, 실제 팻 크기와 단일 사용량 바의 고정 슬롯을 적용해 오버레이가 숨거나 팻에서 멀어지던 문제를 수정했습니다.
 - Usage tracking now follows Codex SQLite logs after the active database moved under `~/.codex/sqlite/`, while keeping legacy log paths supported.
 - Cross-display pet drags bridge brief live-overlay coordinate gaps from the mouse-to-pet offset instead of waiting for persisted pet state to catch up.

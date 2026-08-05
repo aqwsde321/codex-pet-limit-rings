@@ -18,6 +18,7 @@ for path in \
   "$STATE_DIR/turn-usage.json" \
   "$STATE_DIR/turn-usage-ledger.json" \
   "$STATE_DIR/turn-usage-summary.json" \
+  "$STATE_DIR/limit-state-cache.json" \
   "$STATE_DIR/turn-usage-queue.jsonl" \
   "$STATE_DIR/turn-usage.json.tmp" \
   "$STATE_DIR/turn-usage-ledger.json.tmp" \
@@ -73,6 +74,7 @@ cleanup_paths = [
     codex_home / "codex-pet-limit-rings" / "turn-usage.json",
     codex_home / "codex-pet-limit-rings" / "turn-usage-ledger.json",
     codex_home / "codex-pet-limit-rings" / "turn-usage-summary.json",
+    codex_home / "codex-pet-limit-rings" / "limit-state-cache.json",
     settings_path,
     codex_home / "codex-pet-limit-rings" / "turn-usage.json.tmp",
     codex_home / "codex-pet-limit-rings" / "turn-usage-ledger.json.tmp",

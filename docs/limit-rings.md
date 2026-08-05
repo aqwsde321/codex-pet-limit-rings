@@ -77,9 +77,9 @@ The LaunchAgent starts the app at login. The installer also removes the earlier 
 ~/Library/LaunchAgents/com.codex-pet.limit-aura.plist
 ```
 
-`tools/uninstall-limit-rings.sh` unloads the LaunchAgent, removes the app bundle, clears saved overlay visibility and layout preferences, and also cleans up those earlier prototype names.
+`tools/uninstall-limit-rings.sh`는 LaunchAgent와 설치된 프로세스를 종료하고 앱 번들, 앱 로그, 전용 preferences, 이전 릴리스의 hook 설정과 로컬 상태를 제거합니다. 서비스나 프로세스가 남으면 성공 메시지 대신 nonzero로 종료합니다.
 
-설치와 제거 과정에서 이전 릴리스가 남긴 턴별 사용량 hook 설정과 로컬 상태도 정리합니다.
+Codex 펫 자체와 저장소 `tmp/`의 개발 산출물은 제거하지 않습니다.
 
 The build, install, and uninstall scripts refuse destructive app-bundle operations outside the repository `tmp/` app path or the default `~/Applications/CodexPetLimitRings.app` and `~/Applications/CodexLimitAura.app` paths.
 
@@ -97,6 +97,7 @@ Render a static preview:
 swiftc tools/codex-pet-limit-rings.swift -o tmp/codex-pet-limit-rings -framework AppKit -lsqlite3
 tmp/codex-pet-limit-rings --preview tmp/limit-rings-preview.png --size 164
 tools/test-cleanup-legacy-turn-usage.sh
+tools/test-uninstall-limit-rings.sh
 ```
 
 ## Codex Skill

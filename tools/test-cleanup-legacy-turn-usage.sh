@@ -76,10 +76,10 @@ fi
 THIRD_HOME="$TEST_ROOT/third/.codex"
 THIRD_STATE="$THIRD_HOME/codex-pet-limit-rings"
 mkdir -p "$THIRD_STATE"
-touch "$THIRD_STATE/turn-usage-queue.lock"
+touch "$THIRD_STATE/turn-usage-queue.lock" "$THIRD_STATE/limit-state-cache.json"
 CODEX_HOME="$THIRD_HOME" "$ROOT/tools/cleanup-legacy-turn-usage.sh" >/dev/null
-if [[ -e "$THIRD_STATE/turn-usage-queue.lock" ]]; then
-  echo "legacy queue lock remains" >&2
+if [[ -e "$THIRD_STATE/turn-usage-queue.lock" || -e "$THIRD_STATE/limit-state-cache.json" ]]; then
+  echo "legacy state remains" >&2
   exit 1
 fi
 

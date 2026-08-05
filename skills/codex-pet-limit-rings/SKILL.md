@@ -39,7 +39,7 @@ tools/install-limit-rings.sh
 Install without requiring the user to clone this repository:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/aqwsde321/codex-pet-limit-rings/main/tools/install-remote.sh | bash
+(set -o pipefail && curl -fsSL https://raw.githubusercontent.com/aqwsde321/codex-pet-limit-rings/main/tools/install-remote.sh | bash)
 ```
 
 Run a development build without installing a login item:
@@ -57,7 +57,7 @@ tools/uninstall-limit-rings.sh
 Uninstall without requiring a clone:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/aqwsde321/codex-pet-limit-rings/main/tools/install-remote.sh | bash -s -- --uninstall
+(set -o pipefail && curl -fsSL https://raw.githubusercontent.com/aqwsde321/codex-pet-limit-rings/main/tools/install-remote.sh | bash -s -- --uninstall)
 ```
 
 Install this skill into local Codex:
@@ -102,6 +102,7 @@ bash -n tools/*.sh
 swiftc tools/codex-pet-limit-rings.swift -o tmp/codex-pet-limit-rings -framework AppKit -lsqlite3
 tmp/codex-pet-limit-rings --preview tmp/limit-rings-preview.png --size 164
 tools/test-cleanup-legacy-turn-usage.sh
+tools/test-uninstall-limit-rings.sh
 ```
 
 4. Relaunch with `tools/run-limit-rings.sh` for development or `tools/install-limit-rings.sh` for the packaged login-item flow.

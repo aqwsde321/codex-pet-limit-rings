@@ -1,5 +1,7 @@
 # codex-pet-limit-rings
 
+> 이 프로젝트는 더 이상 업데이트되지 않습니다.
+
 Codex 펫 주변에 사용량 한도를 링이나 바로 표시하는 macOS 보조 앱입니다. Codex 앱 번들을 수정하지 않고, 로컬 Codex 상태와 사용량 로그만 읽어 별도 투명 오버레이 창을 그립니다.
 
 앱은 펫 이미지를 교체하지 않습니다. Codex가 현재 띄운 펫을 그대로 쓰고, 그 주변에 사용량 표시만 얹습니다.
@@ -13,7 +15,7 @@ Codex 펫 주변에 사용량 한도를 링이나 바로 표시하는 macOS 보�
 `git clone` 없이 바로 설치할 수 있습니다. 아래 명령은 필요한 설치 파일만 임시 폴더에 내려받고 설치 후 정리합니다.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/aqwsde321/codex-pet-limit-rings/main/tools/install-remote.sh | bash
+(set -o pipefail && curl -fsSL https://raw.githubusercontent.com/aqwsde321/codex-pet-limit-rings/main/tools/install-remote.sh | bash)
 ```
 
 이미 저장소를 로컬에 받은 경우:
@@ -31,7 +33,7 @@ tools/run-limit-rings.sh
 제거:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/aqwsde321/codex-pet-limit-rings/main/tools/install-remote.sh | bash -s -- --uninstall
+(set -o pipefail && curl -fsSL https://raw.githubusercontent.com/aqwsde321/codex-pet-limit-rings/main/tools/install-remote.sh | bash -s -- --uninstall)
 ```
 
 이미 저장소를 로컬에 받은 경우:
@@ -113,7 +115,7 @@ tools/
   codex-pet-limit-rings.swift      macOS 보조 앱
   install-remote.sh                clone 없는 원라인 설치
   install-limit-rings.sh           빌드/설치/로그인 항목 시작
-  uninstall-limit-rings.sh         앱과 로그인 항목 제거
+  uninstall-limit-rings.sh         앱, 로그인 항목, 전용 상태 제거
   cleanup-legacy-turn-usage.sh     이전 릴리스의 hook 상태 정리
   run-limit-rings.sh               개발 실행
 
@@ -134,6 +136,7 @@ tmp/codex-pet-limit-rings --preview tmp/limit-rings-preview.png --size 164
 bash -n tools/*.sh
 tools/test-limit-rings-usage.sh
 tools/test-cleanup-legacy-turn-usage.sh
+tools/test-uninstall-limit-rings.sh
 ```
 
 ## 라이선스
